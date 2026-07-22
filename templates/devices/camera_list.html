@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Cameras — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>Cameras</h1>
+    <p class="page-subtitle">{{ cameras|length }} camera{{ cameras|length|pluralize }} registered</p>
+</header>
+
+<section class="panel">
+    {% if cameras %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>NVR</th>
+                <th>Channel</th>
+                <th>Location</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for camera in cameras %}
+            <tr>
+                <td><strong>{{ camera.name }}</strong></td>
+                <td>{{ camera.nvr|default:"—" }}</td>
+                <td>{{ camera.channel }}</td>
+                <td>{{ camera.location|default:"—" }}</td>
+                <td><span class="badge badge-{{ camera.status }}">{{ camera.get_status_display }}</span></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">No cameras yet. Add your first camera in <a href="{% url 'admin:devices_camera_add' %}">Admin</a>.</p>
+    {% endif %}
+</section>
+{% endblock %}

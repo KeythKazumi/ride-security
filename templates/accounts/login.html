@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in — Ride Security{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block auth_content %}
+<div class="auth-container">
+    <div class="auth-card">
+        <div class="auth-header">
+            <span class="brand-icon brand-icon-lg">&#9673;</span>
+            <h1>Ride Security</h1>
+            <p>Sign in to access the security dashboard</p>
+        </div>
+
+        {% if form.errors %}
+        <div class="alert alert-error">Invalid username or password.</div>
+        {% endif %}
+
+        <form method="post" class="auth-form">
+            {% csrf_token %}
+            <div class="form-group">
+                <label for="id_username">Username</label>
+                <input type="text" name="username" id="id_username" autofocus required>
+            </div>
+            <div class="form-group">
+                <label for="id_password">Password</label>
+                <input type="password" name="password" id="id_password" required>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

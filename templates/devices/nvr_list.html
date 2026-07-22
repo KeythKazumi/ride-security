@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}NVRs — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>NVRs</h1>
+    <p class="page-subtitle">{{ nvrs|length }} recorder{{ nvrs|length|pluralize }} registered</p>
+</header>
+
+<section class="panel">
+    {% if nvrs %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>IP Address</th>
+                <th>Port</th>
+                <th>Location</th>
+                <th>Status</th>
+                <th>Cameras</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for nvr in nvrs %}
+            <tr>
+                <td><strong>{{ nvr.name }}</strong></td>
+                <td>{{ nvr.ip_address }}</td>
+                <td>{{ nvr.port }}</td>
+                <td>{{ nvr.location|default:"—" }}</td>
+                <td>
+                    {% if nvr.is_online %}
+                    <span class="badge badge-online">Online</span>
+                    {% else %}
+                    <span class="badge badge-offline">Offline</span>
+                    {% endif %}
+                </td>
+                <td>{{ nvr.cameras.count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">No NVRs yet. Add your first NVR in <a href="{% url 'admin:devices_nvr_add' %}">Admin</a>.</p>
+    {% endif %}
+</section>
+{% endblock %}

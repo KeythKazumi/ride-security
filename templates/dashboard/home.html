@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>Dashboard</h1>
+    <p class="page-subtitle">Security system overview</p>
+</header>
+
+<section class="stats-grid">
+    <div class="stat-card">
+        <span class="stat-label">Cameras online</span>
+        <span class="stat-value">{{ stats.cameras_online }}<small>/ {{ stats.cameras_total }}</small></span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">Sensors active</span>
+        <span class="stat-value">{{ stats.sensors_total }}</span>
+    </div>
+    <div class="stat-card {% if stats.sensors_triggered %}stat-alert{% endif %}">
+        <span class="stat-label">Alerts</span>
+        <span class="stat-value">{{ stats.sensors_triggered }}</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">NVRs online</span>
+        <span class="stat-value">{{ stats.nvrs_online }}<small>/ {{ stats.nvrs_total }}</small></span>
+    </div>
+</section>
+
+<div class="content-grid">
+    <section class="panel">
+        <div class="panel-header">
+            <h2>Cameras</h2>
+            <a href="{% url 'devices:cameras' %}" class="link-sm">View all</a>
+        </div>
+        {% if cameras %}
+        <ul class="device-list">
+            {% for camera in cameras %}
+            <li class="device-item">
+                <span class="status-dot status-{{ camera.status }}"></span>
+                <div class="device-info">
+                    <strong>{{ camera.name }}</strong>
+                    <span>{{ camera.location|default:"No location" }}</span>
+                </div>
+                <span class="badge badge-{{ camera.status }}">{{ camera.get_status_display }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="empty-state">No cameras configured yet. Add them in <a href="{% url 'admin:index' %}">Admin</a>.</p>
+        {% endif %}
+    </section>
+
+    <section class="panel">
+        <div class="panel-header">
+            <h2>Sensors</h2>
+            <a href="{% url 'devices:sensors' %}" class="link-sm">View all</a>
+        </div>
+        {% if sensors %}
+        <ul class="device-list">
+            {% for sensor in sensors %}
+            <li class="device-item">
+                <span class="status-dot status-{{ sensor.status }}"></span>
+                <div class="device-info">
+                    <strong>{{ sensor.name }}</strong>
+                    <span>{{ sensor.get_sensor_type_display }} · {{ sensor.location|default:"No location" }}</span>
+                </div>
+                <span class="badge badge-{{ sensor.status }}">{{ sensor.get_status_display }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="empty-state">No sensors configured yet. Add them in <a href="{% url 'admin:index' %}">Admin</a>.</p>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}

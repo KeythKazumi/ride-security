@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}Sensors — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>Sensors</h1>
+    <p class="page-subtitle">{{ sensors|length }} sensor{{ sensors|length|pluralize }} registered</p>
+</header>
+
+<section class="panel">
+    {% if sensors %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Type</th>
+                <th>Location</th>
+                <th>IP Address</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for sensor in sensors %}
+            <tr>
+                <td><strong>{{ sensor.name }}</strong></td>
+                <td>{{ sensor.get_sensor_type_display }}</td>
+                <td>{{ sensor.location|default:"—" }}</td>
+                <td>{{ sensor.ip_address|default:"—" }}</td>
+                <td><span class="badge badge-{{ sensor.status }}">{{ sensor.get_status_display }}</span></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">No sensors yet. Add your first sensor in <a href="{% url 'admin:devices_sensor_add' %}">Admin</a>.</p>
+    {% endif %}
+</section>
+{% endblock %}
