@@ -1,0 +1,15 @@
+services:
+  web:
+    build: .
+    container_name: ride-security
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - db_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  db_data:
