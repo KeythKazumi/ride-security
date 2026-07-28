@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}{{ camera.name }} — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>{{ camera.name }}</h1>
+    <p class="page-subtitle">{{ camera.location|default:"No location" }}</p>
+</header>
+
+<section class="panel">
+    <div class="panel-header">
+        <h2>Live snapshot</h2>
+        <span class="badge badge-{{ camera.status }}">{{ camera.get_status_display }}</span>
+    </div>
+
+    <div class="camera-feed">
+        <img src="{% url 'devices:camera_snapshot' camera.id %}" alt="{{ camera.name }} snapshot" class="camera-snapshot" onerror="this.alt='Snapshot unavailable'; this.classList.add('snapshot-error')">
+    </div>
+
+    <div class="feed-meta">
+        <p><strong>Channel:</strong> {{ camera.channel }}</p>
+        <p><strong>RTSP URL:</strong> <code>{{ rtsp_url|default:"—" }}</code></p>
+        <p><strong>Snapshot URL:</strong> <code>{{ snapshot_url|default:"—" }}</code></p>
+        <p><strong>NVR:</strong> {{ camera.nvr|default:"—" }}</p>
+    </div>
+</section>
+
+<section class="panel" style="margin-top: 20px;">
+    <div class="panel-header">
+        <h2>Direct stream</h2>
+    </div>
+    {% if rtsp_url %}
+    <p class="empty-state">
+        Use this RTSP URL in a compatible player (e.g., VLC):<br>
+        <code>{{ rtsp_url }}</code>
+    </p>
+    {% else %}
+    <p class="empty-state">No RTSP URL configured.</p>
+    {% endif %}
+</section>
+{% endblock %}

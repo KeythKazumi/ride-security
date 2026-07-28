@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -e
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR/.."
+
+DB_FILE="/app/data/ride_security.db"
+
+docker compose exec web rm -f "$DB_FILE"
+"$SCRIPT_DIR/manage" migrate --noinput
+"$SCRIPT_DIR/manage" setup

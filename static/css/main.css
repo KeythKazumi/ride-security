@@ -454,6 +454,38 @@ a:hover {
     margin-bottom: 20px;
 }
 
+.feed-meta {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.feed-meta code {
+    background: var(--bg-elevated);
+    padding: 2px 6px;
+    border-radius: 4px;
+    word-break: break-all;
+}
+
+.camera-feed {
+    text-align: center;
+}
+
+.camera-snapshot {
+    max-width: 100%;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+}
+
+.camera-snapshot.snapshot-error {
+    display: none;
+}
+
 @media (max-width: 768px) {
     .sidebar {
         display: none;

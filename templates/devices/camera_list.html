@@ -23,7 +23,7 @@
         <tbody>
             {% for camera in cameras %}
             <tr>
-                <td><strong>{{ camera.name }}</strong></td>
+                <td><strong><a href="{% url 'devices:camera_feed' camera.id %}">{{ camera.name }}</a></strong></td>
                 <td>{{ camera.nvr|default:"—" }}</td>
                 <td>{{ camera.channel }}</td>
                 <td>{{ camera.location|default:"—" }}</td>

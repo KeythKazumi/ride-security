@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -e
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR/.."
+
+docker compose build
+docker rmi $(docker images -a --filter=dangling=true -q) 2>/dev/null || true
