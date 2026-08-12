@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+
+{% block title %}Discover NVRs — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>Discover NVRs</h1>
+    <p class="page-subtitle">Scan the local network for recorders and cameras</p>
+</header>
+
+<section class="panel">
+    <form method="get" class="form">
+        <input type="hidden" name="scan" value="1">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="network">Network (CIDR)</label>
+                <input type="text" id="network" name="network" value="{{ network }}" placeholder="{% if local_networks %}{{ local_networks.0 }}{% else %}192.168.1.0/24{% endif %}">
+            </div>
+            <div class="form-group">
+                <label>&nbsp;</label>
+                <button type="submit" class="btn btn-primary">Scan network</button>
+            </div>
+        </div>
+        {% if local_networks %}
+        <p class="form-help">Detected networks: {% for net in local_networks %}<code>{{ net }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}. Leave blank to scan all of them.</p>
+        {% endif %}
+    </form>
+</section>
+
+{% if error %}
+<div class="alert alert-error" style="margin-top: 20px;">Discovery failed: {{ error }}</div>
+{% endif %}
+
+{% if scanned %}
+<section class="panel" style="margin-top: 20px;">
+    <div class="panel-header">
+        <h2>Results</h2>
+        <span class="page-subtitle">{{ devices|length }} device{{ devices|length|pluralize }} found</span>
+    </div>
+
+    {% if devices %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>IP Address</th>
+                <th>Detected via</th>
+                <th>Open ports</th>
+                <th>Service URLs</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for device in devices %}
+            <tr>
+                <td><strong>{{ device.ip_address }}</strong></td>
+                <td>{{ device.source }}</td>
+                <td>
+                    {% for port in device.open_ports %}<code>{{ port }}</code>{% if not forloop.last %} {% endif %}{% endfor %}
+                    {% if not device.open_ports %}—{% endif %}
+                </td>
+                <td>
+                    {% for url in device.service_urls %}<code>{{ url }}</code><br>{% empty %}—{% endfor %}
+                </td>
+                <td>
+                    {% if device.already_added %}
+                    <span class="badge badge-online">Added</span>
+                    {% else %}
+                    <a class="btn btn-sm btn-primary" href="{% url 'devices:nvr_add' %}?ip_address={{ device.ip_address }}{% for field, port in device.suggested.items %}&{{ field }}={{ port }}{% endfor %}">Add as NVR</a>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">
+        No devices found. Make sure the server is on the same LAN as the NVR and that
+        the container uses host networking so multicast discovery can reach it.
+    </p>
+    {% endif %}
+</section>
+{% endif %}
+{% endblock %}

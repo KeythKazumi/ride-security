@@ -1,0 +1,17 @@
+# Override for Linux servers (e.g. Fedora) on the same LAN as the NVR.
+#
+# Host networking lets the app send ONVIF multicast probes and scan the LAN
+# directly. Only works on Linux — not on Docker Desktop for macOS/Windows.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.host.yml up -d
+#
+# Or simply: ./docker/up --host
+
+services:
+  web:
+    network_mode: host
+    ports: !reset []
+
+  cloudflared:
+    network_mode: host

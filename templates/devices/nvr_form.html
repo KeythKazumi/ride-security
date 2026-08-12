@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Add NVR — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>Add NVR</h1>
+    <p class="page-subtitle">Register a new Network Video Recorder</p>
+</header>
+
+<section class="panel">
+    <form method="post" class="form">
+        {% csrf_token %}
+
+        <div class="form-section">
+            <h2>Basic information</h2>
+            <div class="form-row">
+                <div class="form-group">{{ form.name.label_tag }} {{ form.name }}</div>
+                <div class="form-group">{{ form.ip_address.label_tag }} {{ form.ip_address }}</div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">{{ form.username.label_tag }} {{ form.username }}</div>
+                <div class="form-group">{{ form.password.label_tag }} {{ form.password }}</div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">{{ form.location.label_tag }} {{ form.location }}</div>
+                <div class="form-group checkbox">{{ form.is_online }} {{ form.is_online.label_tag }}</div>
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h2>Ports</h2>
+            <p class="form-help">Leave a port blank to use the default/fallback. Snapshot URL uses OpenAPI → HTTPS (with Use HTTPS) → Management → fallback port.</p>
+            <div class="form-row">
+                <div class="form-group">{{ form.port.label_tag }} {{ form.port }}</div>
+                <div class="form-group">{{ form.https_port.label_tag }} {{ form.https_port }}</div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">{{ form.management_port.label_tag }} {{ form.management_port }}</div>
+                <div class="form-group">{{ form.service_port.label_tag }} {{ form.service_port }}</div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">{{ form.remote_stream_port.label_tag }} {{ form.remote_stream_port }}</div>
+                <div class="form-group">{{ form.rtsp_port.label_tag }} {{ form.rtsp_port }}</div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">{{ form.openapi_port.label_tag }} {{ form.openapi_port }}</div>
+                <div class="form-group checkbox">{{ form.use_https }} {{ form.use_https.label_tag }}</div>
+            </div>
+        </div>
+
+        {% if form.errors %}
+        <div class="alert alert-error">
+            Please correct the errors below.
+        </div>
+        {% endif %}
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">Save NVR</button>
+            <a href="{% url 'devices:nvrs' %}" class="btn btn-ghost">Cancel</a>
+        </div>
+    </form>
+</section>
+{% endblock %}

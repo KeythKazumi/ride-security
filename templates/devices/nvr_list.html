@@ -6,6 +6,10 @@
 <header class="page-header">
     <h1>NVRs</h1>
     <p class="page-subtitle">{{ nvrs|length }} recorder{{ nvrs|length|pluralize }} registered</p>
+    <div class="header-actions">
+        <a href="{% url 'devices:nvr_discover' %}" class="btn btn-ghost">Discover on LAN</a>
+        <a href="{% url 'devices:nvr_add' %}" class="btn btn-primary">Add NVR</a>
+    </div>
 </header>
 
 <section class="panel">
@@ -41,7 +45,11 @@
         </tbody>
     </table>
     {% else %}
-    <p class="empty-state">No NVRs yet. Add your first NVR in <a href="{% url 'admin:devices_nvr_add' %}">Admin</a>.</p>
+    <p class="empty-state">
+        No NVRs yet.
+        <a href="{% url 'devices:nvr_discover' %}">Scan your network</a> or
+        <a href="{% url 'devices:nvr_add' %}">add one manually</a>.
+    </p>
     {% endif %}
 </section>
 {% endblock %}

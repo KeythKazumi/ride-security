@@ -205,6 +205,42 @@ a:hover {
     border-color: var(--accent);
 }
 
+.form-group input[type="checkbox"] {
+    width: auto;
+    margin-top: 6px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.form-section {
+    margin-bottom: 28px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.form-section h2 {
+    font-size: 1.1rem;
+    margin-bottom: 12px;
+}
+
+.form-help {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin-bottom: 16px;
+}
+
+.form-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-top: 20px;
+}
+
 /* Buttons */
 .btn {
     display: inline-flex;
@@ -251,6 +287,25 @@ a:hover {
 /* Page header */
 .page-header {
     margin-bottom: 28px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 16px;
+}
+
+.page-header h1 {
+    flex: 1 1 auto;
+}
+
+.page-header .page-subtitle {
+    flex: 1 1 100%;
+    order: 3;
+}
+
+.header-actions {
+    display: flex;
+    gap: 10px;
+    margin-left: auto;
 }
 
 .page-header h1 {
