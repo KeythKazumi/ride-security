@@ -23,6 +23,7 @@
                 <th>Location</th>
                 <th>Status</th>
                 <th>Cameras</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -40,6 +41,12 @@
                     {% endif %}
                 </td>
                 <td>{{ nvr.cameras.count }}</td>
+                <td>
+                    <div class="row-actions">
+                        <a href="{% url 'devices:nvr_edit' nvr.id %}" class="btn btn-sm btn-ghost">Edit</a>
+                        <a href="{% url 'devices:nvr_delete' nvr.id %}" class="btn btn-sm btn-danger">Remove</a>
+                    </div>
+                </td>
             </tr>
             {% endfor %}
         </tbody>

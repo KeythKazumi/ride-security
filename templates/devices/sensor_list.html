@@ -6,6 +6,9 @@
 <header class="page-header">
     <h1>Sensors</h1>
     <p class="page-subtitle">{{ sensors|length }} sensor{{ sensors|length|pluralize }} registered</p>
+    <div class="header-actions">
+        <a href="{% url 'devices:sensor_add' %}" class="btn btn-primary">Add Sensor</a>
+    </div>
 </header>
 
 <section class="panel">
@@ -18,6 +21,7 @@
                 <th>Location</th>
                 <th>IP Address</th>
                 <th>Status</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
@@ -28,12 +32,18 @@
                 <td>{{ sensor.location|default:"—" }}</td>
                 <td>{{ sensor.ip_address|default:"—" }}</td>
                 <td><span class="badge badge-{{ sensor.status }}">{{ sensor.get_status_display }}</span></td>
+                <td>
+                    <div class="row-actions">
+                        <a href="{% url 'devices:sensor_edit' sensor.id %}" class="btn btn-sm btn-ghost">Edit</a>
+                        <a href="{% url 'devices:sensor_delete' sensor.id %}" class="btn btn-sm btn-danger">Remove</a>
+                    </div>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
     {% else %}
-    <p class="empty-state">No sensors yet. Add your first sensor in <a href="{% url 'admin:devices_sensor_add' %}">Admin</a>.</p>
+    <p class="empty-state">No sensors yet. <a href="{% url 'devices:sensor_add' %}">Add one</a>.</p>
     {% endif %}
 </section>
 {% endblock %}

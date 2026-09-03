@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -e
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR/.."
+
+echo "Starting Ride Security in local mode (no Cloudflare Tunnel)..."
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.local.yml \
+  up -d --build
+
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.local.yml \
+  logs -f web

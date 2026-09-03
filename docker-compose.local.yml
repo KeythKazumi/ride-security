@@ -1,0 +1,19 @@
+# Local server override.
+#
+# Use this when running on a Linux server on the same LAN as the NVR.
+# It enables host networking so the discovery scanner and RTSP streams see
+# the real local network, and it allows any local host header for testing.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d --build
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml logs -f web
+#
+# On macOS Docker Desktop host networking is not supported; use the default
+# docker-compose.yml bridge network and enter the CIDR manually instead.
+
+services:
+  web:
+    network_mode: host
+    ports: !reset []
+    environment:
+      DJANGO_ALLOWED_HOSTS: "*"

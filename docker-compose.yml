@@ -19,6 +19,8 @@ services:
       - .env
     depends_on:
       - web
+    profiles:
+      - tunnel
     restart: unless-stopped
 
 volumes:

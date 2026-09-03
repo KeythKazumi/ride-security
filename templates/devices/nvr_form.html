@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 
-{% block title %}Add NVR — Ride Security{% endblock %}
+{% block title %}{% if is_edit %}Edit {{ nvr.name }}{% else %}Add NVR{% endif %} — Ride Security{% endblock %}
 
 {% block content %}
 <header class="page-header">
-    <h1>Add NVR</h1>
-    <p class="page-subtitle">Register a new Network Video Recorder</p>
+    <h1>{% if is_edit %}Edit {{ nvr.name }}{% else %}Add NVR{% endif %}</h1>
+    <p class="page-subtitle">{% if is_edit %}Update the recorder settings{% else %}Register a new Network Video Recorder{% endif %}</p>
 </header>
 
 <section class="panel">
@@ -58,6 +58,9 @@
         <div class="form-actions">
             <button type="submit" class="btn btn-primary">Save NVR</button>
             <a href="{% url 'devices:nvrs' %}" class="btn btn-ghost">Cancel</a>
+            {% if is_edit %}
+            <a href="{% url 'devices:nvr_delete' nvr.id %}" class="btn btn-danger">Remove</a>
+            {% endif %}
         </div>
     </form>
 </section>
