@@ -1,12 +1,13 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse
+from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
 from .discovery import discover_devices, get_local_networks
 from .forms import CameraForm, NVRForm, SensorForm
 from .models import Camera, NVR, Sensor
 from .services import fetch_camera_snapshot
+from .streaming import generate_mjpeg_stream
 
 
 @login_required
@@ -37,6 +38,19 @@ def camera_snapshot(request, camera_id):
     if image is None:
         return HttpResponse("Snapshot unavailable", status=502, content_type="text/plain")
     return HttpResponse(image, content_type="image/jpeg")
+
+
+@login_required
+def camera_stream(request, camera_id):
+    """Return an MJPEG live stream from the camera's RTSP source."""
+    camera = get_object_or_404(Camera, pk=camera_id)
+    rtsp_url = camera.get_rtsp_url()
+    if not rtsp_url:
+        return HttpResponse("No RTSP URL configured for this camera", status=404, content_type="text/plain")
+    return StreamingHttpResponse(
+        generate_mjpeg_stream(camera, fps=20),
+        content_type="multipart/x-mixed-replace; boundary=frame",
+    )
 
 
 @login_required

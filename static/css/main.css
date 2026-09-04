@@ -573,3 +573,9 @@ a:hover {
     border-color: rgba(34, 197, 94, 0.3);
     color: #86efac;
 }
+
+.feed-error {
+    padding: 20px;
+    text-align: center;
+    color: var(--text-secondary);
+}
