@@ -48,9 +48,10 @@ class NVR(models.Model):
         return "http"
 
     def rtsp_base_url(self):
-        """Return a base RTSP URL for the NVR."""
+        """Return a base RTSP URL for the NVR (VIGI format)."""
         port = self.get_rtsp_port()
-        return f"rtsp://{self.username}:{self.password}@{self.ip_address}:{port}/Streaming/Channels/101"
+        auth = f"{self.username}:{self.password}@" if self.username else ""
+        return f"rtsp://{auth}{self.ip_address}:{port}/live/1/1/avm"
 
 
 class Camera(models.Model):
@@ -88,12 +89,13 @@ class Camera(models.Model):
         return self.name
 
     def get_rtsp_url(self):
-        """Return RTSP stream URL. Uses override if set, otherwise builds from NVR."""
+        """Return RTSP stream URL. Uses override if set, otherwise builds from NVR (VIGI format)."""
         if self.rtsp_url:
             return self.rtsp_url
         if self.nvr:
             port = self.nvr.get_rtsp_port()
-            return f"rtsp://{self.nvr.username}:{self.nvr.password}@{self.nvr.ip_address}:{port}/Streaming/Channels/{self.channel}01"
+            auth = f"{self.nvr.username}:{self.nvr.password}@" if self.nvr.username else ""
+            return f"rtsp://{auth}{self.nvr.ip_address}:{port}/live/{self.channel}/1/avm"
         return ""
 
     def get_snapshot_url(self):

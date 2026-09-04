@@ -10,12 +10,16 @@
 
 <section class="panel">
     <div class="panel-header">
-        <h2>Live snapshot</h2>
+        <h2>Live stream</h2>
         <span class="badge badge-{{ camera.status }}">{{ camera.get_status_display }}</span>
     </div>
 
     <div class="camera-feed">
-        <img src="{% url 'devices:camera_snapshot' camera.id %}" alt="{{ camera.name }} snapshot" class="camera-snapshot" onerror="this.alt='Snapshot unavailable'; this.classList.add('snapshot-error')">
+        <img src="{% url 'devices:camera_stream' camera.id %}" alt="{{ camera.name }} live stream" class="camera-snapshot" onerror="this.style.display='none'; document.getElementById('feed-error').style.display='block'">
+        <div id="feed-error" class="feed-error" style="display: none;">
+            Live stream unavailable.<br>
+            <a href="{% url 'devices:camera_snapshot' camera.id %}" target="_blank">Try snapshot</a>
+        </div>
     </div>
 
     <div class="feed-meta">
