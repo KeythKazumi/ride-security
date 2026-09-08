@@ -10,7 +10,7 @@ class NVRAdmin(admin.ModelAdmin):
     search_fields = ("name", "ip_address", "location")
     fieldsets = (
         (None, {
-            "fields": ("name", "ip_address", "location", "username", "password", "is_online"),
+            "fields": ("name", "ip_address", "channel_count", "location", "username", "password", "is_online"),
         }),
         ("Ports", {
             "fields": ("port", "https_port", "management_port", "service_port", "remote_stream_port", "rtsp_port", "openapi_port", "use_https"),

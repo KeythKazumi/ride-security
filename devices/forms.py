@@ -11,6 +11,7 @@ class NVRForm(forms.ModelForm):
         fields = [
             "name",
             "ip_address",
+            "channel_count",
             "location",
             "username",
             "password",
@@ -31,6 +32,27 @@ class NVRForm(forms.ModelForm):
 
 class CameraForm(forms.ModelForm):
     """Form for adding or editing a camera from the frontend."""
+
+    channel = forms.TypedChoiceField(
+        coerce=int,
+        label="Channel",
+        help_text="Select the channel on the parent NVR.",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        nvr = None
+
+        if self.data.get("nvr"):
+            try:
+                nvr = NVR.objects.get(pk=self.data["nvr"])
+            except (NVR.DoesNotExist, ValueError):
+                nvr = None
+        elif self.instance and self.instance.pk and self.instance.nvr_id:
+            nvr = self.instance.nvr
+
+        max_channels = nvr.channel_count if nvr else 16
+        self.fields["channel"].choices = [(i, str(i)) for i in range(1, max_channels + 1)]
 
     class Meta:
         model = Camera
