@@ -6,6 +6,11 @@ class NVR(models.Model):
 
     name = models.CharField(max_length=100)
     ip_address = models.GenericIPAddressField()
+    channel_count = models.PositiveIntegerField(
+        default=4,
+        choices=[(4, "4"), (8, "8"), (10, "10"), (16, "16")],
+        help_text="Number of channels available on this NVR.",
+    )
     port = models.PositiveIntegerField(default=554, help_text="Legacy / fallback port.")
     https_port = models.PositiveIntegerField(null=True, blank=True, help_text="HTTPS web port, often 443.")
     service_port = models.PositiveIntegerField(null=True, blank=True, help_text="Cloud / service port.")
