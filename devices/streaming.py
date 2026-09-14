@@ -1,14 +1,26 @@
 import logging
+import os
 import time
 
 logger = logging.getLogger(__name__)
+
+# Force RTSP over TCP. The RTSP handshake on port 554 succeeds over NAT, but the
+# RTP media stream defaults to UDP, whose return packets are dropped by Docker's
+# bridge network (notably on Docker Desktop for macOS). The result is a capture
+# that reports isOpened() == True but blocks on read() until FFmpeg's 30s
+# timeout. The timeout is in microseconds and keeps unreachable hosts failing
+# fast instead of hanging.
+FFMPEG_CAPTURE_OPTIONS = "rtsp_transport;tcp|timeout;5000000"
 
 
 def _open_capture(rtsp_url):
     """Open an RTSP stream with OpenCV."""
     import cv2
 
-    cap = cv2.VideoCapture(rtsp_url)
+    # OpenCV reads this env var when the capture is constructed.
+    os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", FFMPEG_CAPTURE_OPTIONS)
+
+    cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
 
@@ -27,16 +39,33 @@ def generate_mjpeg_stream(camera, fps=20):
         logger.error("Cannot open RTSP stream for camera %s: %s", camera.id, rtsp_url)
         return
 
+    max_reconnects = 3
+    reconnects = 0
     try:
         while True:
             ok, frame = cap.read()
             if not ok:
-                # Try to reconnect once.
+                if reconnects >= max_reconnects:
+                    logger.error(
+                        "Giving up on camera %s after %s reconnect attempts",
+                        camera.id,
+                        reconnects,
+                    )
+                    break
+                reconnects += 1
+                logger.warning(
+                    "Lost stream for camera %s, reconnecting (%s/%s)",
+                    camera.id,
+                    reconnects,
+                    max_reconnects,
+                )
                 cap.release()
                 cap = _open_capture(rtsp_url)
                 if not cap.isOpened():
                     break
                 continue
+
+            reconnects = 0
 
             ok, jpeg = cv2.imencode(".jpg", frame)
             if not ok:

@@ -22,6 +22,9 @@
                 <a href="{% url 'devices:cameras' %}" class="nav-link {% if request.resolver_match.url_name == 'cameras' %}active{% endif %}">
                     Cameras
                 </a>
+                <a href="{% url 'devices:events' %}" class="nav-link {% if request.resolver_match.url_name == 'events' or request.resolver_match.url_name == 'event_detail' %}active{% endif %}">
+                    Events
+                </a>
                 <a href="{% url 'devices:sensors' %}" class="nav-link {% if request.resolver_match.url_name == 'sensors' %}active{% endif %}">
                     Sensors
                 </a>

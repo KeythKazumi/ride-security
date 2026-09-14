@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Camera, NVR, Sensor
+from .models import Camera, MotionEvent, NVR, Person, Sensor
 
 
 @admin.register(NVR)
@@ -41,6 +41,24 @@ class CameraAdmin(admin.ModelAdmin):
             "description": "Leave blank to auto-generate from the NVR credentials.",
         }),
     )
+
+
+@admin.register(Person)
+class PersonAdmin(admin.ModelAdmin):
+    list_display = ("name", "reference_image", "created_at", "updated_at")
+    search_fields = ("name",)
+
+
+@admin.register(MotionEvent)
+class MotionEventAdmin(admin.ModelAdmin):
+    list_display = ("id", "camera", "detected_at", "source", "status", "quality", "face_count", "best_face_size", "blur_score")
+    list_filter = ("status", "quality", "source", "camera")
+    readonly_fields = ("detected_at", "analyzed_at", "faces", "recognized")
+    date_hierarchy = "detected_at"
+
+    @admin.display(description="Best face")
+    def best_face_size(self, obj):
+        return obj.best_face_size or "—"
 
 
 @admin.register(Sensor)

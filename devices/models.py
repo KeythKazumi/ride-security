@@ -154,3 +154,110 @@ class Sensor(models.Model):
 
     def __str__(self):
         return self.name
+
+
+def _person_upload_to(instance, filename):
+    return f"persons/{instance.name}/{filename}"
+
+
+class Person(models.Model):
+    """Known person for face recognition."""
+
+    name = models.CharField(max_length=100)
+    reference_image = models.ImageField(
+        upload_to=_person_upload_to,
+        help_text="Clear front-facing photo. DeepFace will compare camera frames to this image.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+def _event_upload_to(instance, filename):
+    return f"events/camera_{instance.camera_id}/{filename}"
+
+
+class MotionEvent(models.Model):
+    """A frame captured because motion was detected on a camera.
+
+    Capture and analysis are deliberately separate: the detector only persists
+    the frame (cheap), and face detection / recognition runs afterwards via
+    `manage.py process_events` (expensive).
+    """
+
+    class Source(models.TextChoices):
+        FRAME_DIFF = "frame_diff", "OpenCV frame diff"
+        MANUAL = "manual", "Manual capture"
+        ONVIF = "onvif", "ONVIF event"
+        NVR_PUSH = "nvr_push", "NVR OpenAPI push"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending analysis"
+        ANALYZED = "analyzed", "Analyzed"
+        FAILED = "failed", "Analysis failed"
+
+    class Quality(models.TextChoices):
+        UNKNOWN = "unknown", "Not analyzed"
+        USABLE = "usable", "Usable for recognition"
+        NO_FACE = "no_face", "No face detected"
+        TOO_SMALL = "too_small", "Face too small"
+        TOO_BLURRY = "too_blurry", "Face too blurry"
+
+    camera = models.ForeignKey(
+        Camera,
+        on_delete=models.CASCADE,
+        related_name="motion_events",
+    )
+    source = models.CharField(max_length=20, choices=Source.choices, default=Source.FRAME_DIFF)
+    image = models.ImageField(upload_to=_event_upload_to)
+    detected_at = models.DateTimeField(auto_now_add=True)
+    motion_score = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Fraction of the frame that changed (0-1). Empty for manual captures.",
+    )
+
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    analyzed_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+
+    face_count = models.PositiveIntegerField(default=0)
+    best_face_width = models.PositiveIntegerField(default=0)
+    best_face_height = models.PositiveIntegerField(default=0)
+    blur_score = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Laplacian variance of the largest face crop. Higher is sharper.",
+    )
+    quality = models.CharField(max_length=20, choices=Quality.choices, default=Quality.UNKNOWN)
+    faces = models.JSONField(default=list, blank=True, help_text="Detected face boxes and labels.")
+    recognized = models.JSONField(default=list, blank=True, help_text="Names matched against Person references.")
+
+    class Meta:
+        ordering = ["-detected_at"]
+        indexes = [
+            models.Index(fields=["status"]),
+            models.Index(fields=["-detected_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.camera} @ {self.detected_at:%Y-%m-%d %H:%M:%S}"
+
+    @property
+    def is_usable(self):
+        return self.quality == self.Quality.USABLE
+
+    @property
+    def best_face_size(self):
+        if not self.best_face_width or not self.best_face_height:
+            return None
+        return f"{self.best_face_width}x{self.best_face_height}"
+
+    @property
+    def recognized_display(self):
+        return ", ".join(self.recognized) if self.recognized else "—"

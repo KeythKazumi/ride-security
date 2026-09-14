@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Events — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>Motion events</h1>
+    <p class="page-subtitle">Captured frames and whether each one could support face recognition</p>
+</header>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <span class="stat-label">Captured</span>
+        <span class="stat-value">{{ stats.total }}</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">Pending analysis</span>
+        <span class="stat-value">{{ stats.pending }}</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">Recognition-grade</span>
+        <span class="stat-value">{{ stats.usable }}</span>
+    </div>
+    <div class="stat-card">
+        <span class="stat-label">No face</span>
+        <span class="stat-value">{{ stats.no_face }}</span>
+    </div>
+</div>
+
+<section class="panel">
+    <div class="panel-header">
+        <h2>Captures</h2>
+        <form method="get" class="filter-form">
+            <select name="camera" class="filter-select">
+                <option value="">All cameras</option>
+                {% for camera in cameras %}
+                <option value="{{ camera.id }}" {% if selected_camera == camera.id|stringformat:"s" %}selected{% endif %}>{{ camera.name }}</option>
+                {% endfor %}
+            </select>
+            <select name="quality" class="filter-select">
+                <option value="">Any verdict</option>
+                {% for value, label in quality_choices %}
+                <option value="{{ value }}" {% if selected_quality == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-sm btn-ghost">Filter</button>
+        </form>
+    </div>
+
+    {% if events %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Frame</th>
+                <th>Camera</th>
+                <th>Detected</th>
+                <th>Trigger</th>
+                <th>Faces</th>
+                <th>Best face</th>
+                <th>Sharpness</th>
+                <th>Verdict</th>
+                <th>Recognized</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for event in events %}
+            <tr>
+                <td>
+                    <a href="{% url 'devices:event_detail' event.id %}">
+                        <img src="{% url 'devices:event_image' event.id %}" alt="Capture {{ event.id }}" class="event-thumb">
+                    </a>
+                </td>
+                <td><strong>{{ event.camera.name }}</strong></td>
+                <td>{{ event.detected_at|date:"Y-m-d H:i:s" }}</td>
+                <td>
+                    {{ event.get_source_display }}
+                    {% if event.motion_score %}<br><small>score {{ event.motion_score|floatformat:4 }}</small>{% endif %}
+                </td>
+                <td>{{ event.face_count }}</td>
+                <td>{{ event.best_face_size|default:"—" }}</td>
+                <td>{% if event.blur_score %}{{ event.blur_score|floatformat:1 }}{% else %}—{% endif %}</td>
+                <td>
+                    {% if event.status == 'pending' %}
+                    <span class="badge badge-offline">Pending</span>
+                    {% elif event.status == 'failed' %}
+                    <span class="badge badge-triggered">Failed</span>
+                    {% else %}
+                    <span class="badge badge-{{ event.quality }}">{{ event.get_quality_display }}</span>
+                    {% endif %}
+                </td>
+                <td>{{ event.recognized_display }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">
+        No captures yet. Start the watcher with
+        <code>manage.py watch_motion</code>, or open a camera and use <strong>Capture &amp; analyze</strong>.
+    </p>
+    {% endif %}
+</section>
+{% endblock %}
