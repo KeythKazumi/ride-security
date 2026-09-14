@@ -1,5 +1,9 @@
 Django>=6.0,<7.0
 gunicorn>=23.0,<24.0
 requests>=2.32,<3.0
-numpy>=2.0,<3.0
+Pillow>=10.0,<11.0
+numpy>=1.26.1,<2.1  # TensorFlow compatible
+tensorflow>=2.16.0,<2.18.0  # plain package: CPU-only by default, has arm64 wheels
+tf-keras>=2.16.0,<2.18.0  # Keras 2 shim required by deepface/retinaface on TF 2.16+
 opencv-python-headless>=4.10,<5.0
+deepface>=0.0.92,<0.0.94

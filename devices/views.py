@@ -1,11 +1,16 @@
+import os
+import tempfile
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 
 from .discovery import discover_devices, get_local_networks
+from .events import analyze_event, annotate_event, record_motion_event
+from .face_recognition import draw_recognized_faces, recognize_people
 from .forms import CameraForm, NVRForm, SensorForm
-from .models import Camera, NVR, Sensor
+from .models import Camera, MotionEvent, NVR, Sensor
 from .services import fetch_camera_snapshot
 from .streaming import generate_mjpeg_stream
 
@@ -51,6 +56,128 @@ def camera_stream(request, camera_id):
         generate_mjpeg_stream(camera, fps=20),
         content_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+@login_required
+def camera_recognize(request, camera_id):
+    """Return a JPEG snapshot with face recognition boxes and labels."""
+    camera = get_object_or_404(Camera, pk=camera_id)
+    image_bytes = fetch_camera_snapshot(camera)
+    if not image_bytes:
+        return HttpResponse("Snapshot unavailable", status=502, content_type="text/plain")
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
+
+        faces = recognize_people(tmp_path)
+        annotated = draw_recognized_faces(tmp_path, faces)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    if not annotated:
+        return HttpResponse("Could not annotate image", status=502, content_type="text/plain")
+    return HttpResponse(annotated, content_type="image/jpeg")
+
+
+@login_required
+def event_list(request):
+    """Review captured motion events and whether each frame is recognition-grade."""
+    events = MotionEvent.objects.select_related("camera")
+
+    camera_id = request.GET.get("camera")
+    if camera_id:
+        events = events.filter(camera_id=camera_id)
+    quality = request.GET.get("quality")
+    if quality:
+        events = events.filter(quality=quality)
+
+    all_events = MotionEvent.objects.all()
+    return render(
+        request,
+        "devices/event_list.html",
+        {
+            "events": events[:100],
+            "cameras": Camera.objects.all(),
+            "selected_camera": camera_id,
+            "selected_quality": quality,
+            "quality_choices": MotionEvent.Quality.choices,
+            "stats": {
+                "total": all_events.count(),
+                "pending": all_events.filter(status=MotionEvent.Status.PENDING).count(),
+                "usable": all_events.filter(quality=MotionEvent.Quality.USABLE).count(),
+                "no_face": all_events.filter(quality=MotionEvent.Quality.NO_FACE).count(),
+            },
+        },
+    )
+
+
+@login_required
+def event_detail(request, event_id):
+    event = get_object_or_404(MotionEvent.objects.select_related("camera"), pk=event_id)
+    return render(request, "devices/event_detail.html", {"event": event})
+
+
+@login_required
+def event_image(request, event_id):
+    """Serve the stored frame through Django so it stays behind the login."""
+    event = get_object_or_404(MotionEvent, pk=event_id)
+    event.image.open("rb")
+    try:
+        return HttpResponse(event.image.read(), content_type="image/jpeg")
+    finally:
+        event.image.close()
+
+
+@login_required
+def event_annotated(request, event_id):
+    event = get_object_or_404(MotionEvent, pk=event_id)
+    annotated = annotate_event(event)
+    if not annotated:
+        return HttpResponse("No faces to annotate", status=404, content_type="text/plain")
+    return HttpResponse(annotated, content_type="image/jpeg")
+
+
+@login_required
+def event_analyze(request, event_id):
+    """Run analysis for a single event now rather than waiting for process_events."""
+    event = get_object_or_404(MotionEvent.objects.select_related("camera"), pk=event_id)
+    if request.method != "POST":
+        return redirect("devices:event_detail", event_id=event.pk)
+
+    analyze_event(event)
+    if event.status == MotionEvent.Status.FAILED:
+        messages.error(request, f"Analysis failed: {event.error}")
+    else:
+        messages.success(request, f"Analyzed: {event.get_quality_display()}.")
+    return redirect("devices:event_detail", event_id=event.pk)
+
+
+@login_required
+def event_capture(request, camera_id):
+    """Capture a frame on demand and analyze it immediately.
+
+    Lets you judge whether a camera's framing and lighting can support face
+    recognition without waiting for someone to walk past.
+    """
+    camera = get_object_or_404(Camera, pk=camera_id)
+    if request.method != "POST":
+        return redirect("devices:camera_feed", camera_id=camera.pk)
+
+    event = record_motion_event(camera, MotionEvent.Source.MANUAL)
+    if event is None:
+        messages.error(request, f"Could not capture a frame from '{camera.name}'.")
+        return redirect("devices:camera_feed", camera_id=camera.pk)
+
+    analyze_event(event)
+    if event.status == MotionEvent.Status.FAILED:
+        messages.error(request, f"Captured, but analysis failed: {event.error}")
+    else:
+        messages.success(request, f"Captured and analyzed: {event.get_quality_display()}.")
+    return redirect("devices:event_detail", event_id=event.pk)
 
 
 @login_required

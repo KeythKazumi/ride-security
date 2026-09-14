@@ -9,6 +9,39 @@ services:
     volumes:
       - .:/app
       - db_data:/app/data
+      - deepface_weights:/root/.deepface
+    restart: unless-stopped
+
+  motion:
+    build: .
+    container_name: ride-security-motion
+    entrypoint: ["python", "manage.py", "watch_motion"]
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - db_data:/app/data
+      - deepface_weights:/root/.deepface
+    depends_on:
+      - web
+    profiles:
+      - motion
+    restart: unless-stopped
+
+  events:
+    build: .
+    container_name: ride-security-events
+    entrypoint: ["python", "manage.py", "process_events", "--loop"]
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - db_data:/app/data
+      - deepface_weights:/root/.deepface
+    depends_on:
+      - web
+    profiles:
+      - motion
     restart: unless-stopped
 
   cloudflared:
@@ -25,3 +58,4 @@ services:
 
 volumes:
   db_data:
+  deepface_weights:

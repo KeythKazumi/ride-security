@@ -113,6 +113,61 @@ From the web UI you can:
 
 For VIGI NVRs, the RTSP and snapshot URLs are built from the NVR IP, channel, and credentials.
 
+## Motion capture and face recognition
+
+The app can watch a camera's RTSP stream, capture a frame when something moves, and tell
+you whether that frame is good enough for face recognition.
+
+### 1. Start the watcher
+
+```bash
+docker compose --profile motion up -d
+```
+
+That starts two workers: `watch_motion` (detects motion, saves frames) and
+`process_events --loop` (runs face detection on saved frames). They are separate on
+purpose — recognition takes hundreds of milliseconds and must not stall detection.
+
+To watch a single camera with custom sensitivity:
+
+```bash
+docker compose run --rm --entrypoint python web manage.py watch_motion \
+  --camera 1 --min-area 0.01 --cooldown 30
+```
+
+- `--min-area` — fraction of the frame that must change (default `0.005`). Raise it if
+  you get false triggers from trees or shadows.
+- `--cooldown` — seconds between captures per camera (default `15`).
+- `--sample-fps` — frames analysed per second (default `5`). Lower it to save CPU.
+
+### 2. Review the captures
+
+Open **Events** in the sidebar. Each row shows the frame, how much of it changed, how many
+faces were found, the largest face in pixels, a sharpness score, and a verdict:
+
+| Verdict | Meaning |
+| --- | --- |
+| Usable for recognition | A face at least 80px on its short side and sharp enough to embed |
+| Face too small | Detected, but too few pixels — move closer, zoom, or raise resolution |
+| Face too blurry | Motion blur or focus problem — needs faster shutter or more light |
+| No face detected | Motion happened, but no face was in frame |
+
+### 3. Test without waiting for motion
+
+Open a camera and click **Capture & analyze**. That grabs a frame now and analyses it
+immediately, which is the quickest way to check whether a camera's framing and lighting
+can support recognition at all.
+
+### 4. Enroll people
+
+Recognition only names people you have enrolled. Add them in **Admin → Persons** with a
+clear front-facing photo. Until then, captures still get a quality verdict, but the
+recognized column stays empty.
+
+The 80px and sharpness-40 thresholds live in `devices/face_recognition.py`
+(`MIN_FACE_PX`, `MIN_FACE_SHARPNESS`) and are starting heuristics — expect to calibrate
+them against your own cameras.
+
 ## Enabling Cloudflare Tunnel later
 
 When you want external access:
@@ -152,9 +207,12 @@ When you want external access:
 ```
 
 - **Django** serves the web UI.
-- **OpenCV** pulls frames from RTSP.
+- **OpenCV** pulls frames from RTSP and detects motion.
+- **DeepFace** detects and recognizes faces in captured frames.
 - **Docker** containerizes the app.
 - **Cloudflare Tunnel** is an optional add-on for remote access.
+
+Detailed component, sequence, and class diagrams live in [`docs/architecture.md`](docs/architecture.md).
 
 ## Offline use
 

@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}Capture {{ event.id }} — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>{{ event.camera.name }}</h1>
+    <p class="page-subtitle">{{ event.detected_at|date:"Y-m-d H:i:s" }} · {{ event.get_source_display }}</p>
+    <div class="header-actions">
+        <a href="{% url 'devices:events' %}" class="btn btn-ghost">Back to events</a>
+        <a href="{% url 'devices:camera_feed' event.camera.id %}" class="btn btn-ghost">Live feed</a>
+        <form method="post" action="{% url 'devices:event_analyze' event.id %}" class="inline-form">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary">
+                {% if event.status == 'pending' %}Analyze now{% else %}Re-analyze{% endif %}
+            </button>
+        </form>
+    </div>
+</header>
+
+<section class="panel">
+    <div class="panel-header">
+        <h2>Recognition verdict</h2>
+        {% if event.status == 'pending' %}
+        <span class="badge badge-offline">Pending analysis</span>
+        {% elif event.status == 'failed' %}
+        <span class="badge badge-triggered">Analysis failed</span>
+        {% else %}
+        <span class="badge badge-{{ event.quality }}">{{ event.get_quality_display }}</span>
+        {% endif %}
+    </div>
+
+    {% if event.status == 'failed' %}
+    <p class="alert alert-error">{{ event.error }}</p>
+    {% endif %}
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <span class="stat-label">Faces detected</span>
+            <span class="stat-value">{{ event.face_count }}</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Largest face</span>
+            <span class="stat-value">{{ event.best_face_size|default:"—" }}</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Sharpness</span>
+            <span class="stat-value">{% if event.blur_score %}{{ event.blur_score|floatformat:1 }}{% else %}—{% endif %}</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-label">Motion score</span>
+            <span class="stat-value">{% if event.motion_score %}{{ event.motion_score|floatformat:4 }}{% else %}—{% endif %}</span>
+        </div>
+    </div>
+
+    <div class="feed-meta">
+        <p><strong>Recognized:</strong> {{ event.recognized_display }}</p>
+        {% if event.quality == 'no_face' %}
+        <p class="empty-state">No face was found in this frame. Motion alone does not mean a usable face — check
+            framing, or trigger a capture while someone faces the camera.</p>
+        {% elif event.quality == 'too_small' %}
+        <p class="empty-state">A face was found but it is under the {{ event.best_face_size }} pixel floor for reliable
+            embedding. Move the camera closer, zoom in, or raise the channel resolution.</p>
+        {% elif event.quality == 'too_blurry' %}
+        <p class="empty-state">The face is too soft to embed reliably — motion blur or focus. A faster shutter or
+            better lighting usually fixes this.</p>
+        {% endif %}
+    </div>
+</section>
+
+<div class="content-grid">
+    <section class="panel">
+        <div class="panel-header">
+            <h2>Captured frame</h2>
+        </div>
+        <div class="camera-feed">
+            <img src="{% url 'devices:event_image' event.id %}" alt="Captured frame" class="camera-snapshot">
+        </div>
+    </section>
+
+    {% if event.faces %}
+    <section class="panel">
+        <div class="panel-header">
+            <h2>Detected faces</h2>
+        </div>
+        <div class="camera-feed">
+            <img src="{% url 'devices:event_annotated' event.id %}" alt="Annotated frame" class="camera-snapshot">
+        </div>
+    </section>
+    {% endif %}
+</div>
+
+{% if event.faces %}
+<section class="panel" style="margin-top: 20px;">
+    <div class="panel-header">
+        <h2>Face details</h2>
+    </div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>Box (x, y, w, h)</th>
+                <th>Detector confidence</th>
+                <th>Match distance</th>
+                <th>Sharpness</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for face in event.faces %}
+            <tr>
+                <td>{{ forloop.counter }}</td>
+                <td>{{ face.name|default:"—" }}</td>
+                <td><code>{{ face.box|join:", " }}</code></td>
+                <td>{% if face.confidence %}{{ face.confidence|floatformat:3 }}{% else %}—{% endif %}</td>
+                <td>{% if face.distance %}{{ face.distance|floatformat:4 }}{% else %}—{% endif %}</td>
+                <td>{% if face.sharpness %}{{ face.sharpness|floatformat:1 }}{% else %}—{% endif %}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+{% endblock %}
