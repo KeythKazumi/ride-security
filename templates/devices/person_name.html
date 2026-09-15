@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Name {{ person.display_name }} — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>{% if person.is_named %}Rename or merge{% else %}Who is this?{% endif %}</h1>
+    <p class="page-subtitle">
+        Seen on {{ person.last_seen_at|date:"M j, H:i"|default:"an unknown date" }}
+        · identity <code>{{ person.code }}</code>
+    </p>
+</header>
+
+<div class="content-grid">
+    <section class="panel">
+        <div class="panel-header">
+            <h2>Reference face</h2>
+        </div>
+        <div class="camera-feed">
+            <img src="{% url 'devices:person_image' person.id %}" alt="{{ person.display_name }}" class="camera-snapshot">
+        </div>
+    </section>
+
+    <section class="panel">
+        <form method="post" class="form">
+            {% csrf_token %}
+
+            {% if form.non_field_errors %}
+            <div class="alert alert-error">{{ form.non_field_errors }}</div>
+            {% endif %}
+
+            <div class="form-section">
+                <h2>Give them a name</h2>
+                <div class="form-group">
+                    {{ form.name.label_tag }} {{ form.name }}
+                    {% if form.name.errors %}<div class="alert alert-error">{{ form.name.errors }}</div>{% endif %}
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h2>Already in the database?</h2>
+                <p class="form-help">
+                    The recognizer creates a separate identity when the same face appears at a
+                    different angle or in different light. Merging keeps one person with all their
+                    reference images and sightings.
+                </p>
+                <div class="form-group">
+                    {{ form.merge_into.label_tag }} {{ form.merge_into }}
+                    <span class="form-help">{{ form.merge_into.help_text }}</span>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Save</button>
+                <a href="{% url 'devices:people' %}" class="btn btn-ghost">Cancel</a>
+                <a href="{% url 'devices:person_delete' person.id %}" class="btn btn-danger">Not a face / remove</a>
+            </div>
+        </form>
+    </section>
+</div>
+
+{% if sightings %}
+<section class="panel" style="margin-top: 20px;">
+    <div class="panel-header">
+        <h2>Where this face was seen</h2>
+    </div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Frame</th>
+                <th>Camera</th>
+                <th>When</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for sighting in sightings %}
+            <tr>
+                <td>
+                    <a href="{% url 'devices:event_detail' sighting.event_id %}">
+                        <img src="{% url 'devices:event_image' sighting.event_id %}" alt="Capture" class="event-thumb">
+                    </a>
+                </td>
+                <td>{{ sighting.event.camera.name }}</td>
+                <td>{{ sighting.event.detected_at|date:"Y-m-d H:i:s" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+{% endblock %}

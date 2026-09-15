@@ -1,3 +1,6 @@
+import uuid
+from urllib.parse import quote, urlencode
+
 from django.db import models
 
 
@@ -52,11 +55,22 @@ class NVR(models.Model):
             return "https"
         return "http"
 
+    def rtsp_userinfo(self):
+        """Return the `user:pass@` prefix, percent-encoded.
+
+        NVR passwords routinely contain `@`, `:` and `/`, which are all URL
+        delimiters. Interpolating them raw produces a URL that either points at
+        the wrong host or drops half the password.
+        """
+        if not self.username:
+            return ""
+        user = quote(self.username, safe="")
+        password = quote(self.password, safe="")
+        return f"{user}:{password}@" if self.password else f"{user}@"
+
     def rtsp_base_url(self):
         """Return a base RTSP URL for the NVR (VIGI format)."""
-        port = self.get_rtsp_port()
-        auth = f"{self.username}:{self.password}@" if self.username else ""
-        return f"rtsp://{auth}{self.ip_address}:{port}/live/1/1/avm"
+        return f"rtsp://{self.rtsp_userinfo()}{self.ip_address}:{self.get_rtsp_port()}/live/1/1/avm"
 
 
 class Camera(models.Model):
@@ -99,7 +113,7 @@ class Camera(models.Model):
             return self.rtsp_url
         if self.nvr:
             port = self.nvr.get_rtsp_port()
-            auth = f"{self.nvr.username}:{self.nvr.password}@" if self.nvr.username else ""
+            auth = self.nvr.rtsp_userinfo()
             return f"rtsp://{auth}{self.nvr.ip_address}:{port}/live/{self.channel}/1/avm"
         return ""
 
@@ -110,10 +124,14 @@ class Camera(models.Model):
         if self.nvr:
             protocol = self.nvr.get_snapshot_protocol()
             port = self.nvr.get_snapshot_port()
-            return (
-                f"{protocol}://{self.nvr.ip_address}:{port}/cgi-bin/snapshot.cgi?"
-                f"channel={self.channel}&user={self.nvr.username}&pwd={self.nvr.password}"
+            query = urlencode(
+                {
+                    "channel": self.channel,
+                    "user": self.nvr.username,
+                    "pwd": self.nvr.password,
+                }
             )
+            return f"{protocol}://{self.nvr.ip_address}:{port}/cgi-bin/snapshot.cgi?{query}"
         return ""
 
 
@@ -156,26 +174,117 @@ class Sensor(models.Model):
         return self.name
 
 
+def new_identity_code():
+    return uuid.uuid4().hex[:12]
+
+
 def _person_upload_to(instance, filename):
-    return f"persons/{instance.name}/{filename}"
+    # Keyed on the immutable code, never the name: DeepFace derives identity from
+    # the directory name, so a rename must not move (or orphan) the references.
+    return f"persons/{instance.code}/{filename}"
 
 
 class Person(models.Model):
-    """Known person for face recognition."""
+    """A face identity. Either enrolled by hand or auto-created from a capture.
 
-    name = models.CharField(max_length=100)
+    `name` is blank until a human labels the person, so the recognizer can build
+    a face database on its own and ask for names afterwards.
+    """
+
+    code = models.CharField(
+        max_length=32,
+        unique=True,
+        default=new_identity_code,
+        editable=False,
+        help_text="Immutable key used as the reference directory name.",
+    )
+    name = models.CharField(max_length=100, blank=True)
     reference_image = models.ImageField(
         upload_to=_person_upload_to,
         help_text="Clear front-facing photo. DeepFace will compare camera frames to this image.",
     )
+    auto_created = models.BooleanField(
+        default=False,
+        help_text="Created by the recognizer from an unmatched face rather than uploaded.",
+    )
+    last_seen_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["name"]
+        ordering = ["name", "-created_at"]
 
     def __str__(self):
-        return self.name
+        return self.display_name
+
+    @property
+    def is_named(self):
+        return bool(self.name.strip())
+
+    @property
+    def display_name(self):
+        return self.name.strip() or f"Unnamed #{self.code[:6]}"
+
+
+def _candidate_upload_to(instance, filename):
+    return f"candidates/{instance.code}/{filename}"
+
+
+class FaceCandidate(models.Model):
+    """An unmatched face waiting to be seen again before it becomes a Person.
+
+    A single detection is not enough evidence to create an identity — one
+    false positive would permanently pollute the database. A candidate is
+    promoted only after `PROMOTE_AFTER_SIGHTINGS` separate events.
+    """
+
+    PROMOTE_AFTER_SIGHTINGS = 2
+
+    code = models.CharField(max_length=32, unique=True, default=new_identity_code, editable=False)
+    image = models.ImageField(upload_to=_candidate_upload_to)
+    camera = models.ForeignKey(
+        Camera,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="face_candidates",
+    )
+    sighting_count = models.PositiveIntegerField(default=1)
+    first_seen_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-last_seen_at"]
+
+    def __str__(self):
+        return f"Candidate {self.code[:6]} ({self.sighting_count} sighting(s))"
+
+    @property
+    def ready_to_promote(self):
+        return self.sighting_count >= self.PROMOTE_AFTER_SIGHTINGS
+
+
+class Sighting(models.Model):
+    """One recognised face in one capture."""
+
+    event = models.ForeignKey("MotionEvent", on_delete=models.CASCADE, related_name="sightings")
+    person = models.ForeignKey(Person, on_delete=models.CASCADE, related_name="sightings")
+    distance = models.FloatField(null=True, blank=True, help_text="Cosine distance to the reference.")
+    box = models.JSONField(default=list, blank=True)
+    is_enrollment = models.BooleanField(
+        default=False,
+        help_text="This capture is the one that created the person.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["event", "person"], name="unique_sighting_per_event"),
+        ]
+
+    def __str__(self):
+        return f"{self.person} in event {self.event_id}"
 
 
 def _event_upload_to(instance, filename):
@@ -204,6 +313,7 @@ class MotionEvent(models.Model):
     class Quality(models.TextChoices):
         UNKNOWN = "unknown", "Not analyzed"
         USABLE = "usable", "Usable for recognition"
+        PERSON = "person", "Person seen, no usable face"
         NO_FACE = "no_face", "No face detected"
         TOO_SMALL = "too_small", "Face too small"
         TOO_BLURRY = "too_blurry", "Face too blurry"
@@ -237,6 +347,16 @@ class MotionEvent(models.Model):
     quality = models.CharField(max_length=20, choices=Quality.choices, default=Quality.UNKNOWN)
     faces = models.JSONField(default=list, blank=True, help_text="Detected face boxes and labels.")
     recognized = models.JSONField(default=list, blank=True, help_text="Names matched against Person references.")
+    persons = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Person-shaped regions found by pedestrian detection (box x, y, w, h).",
+    )
+    reviewed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When a user confirmed the verdict. Confirmed no-face events are purged by cleanup_events.",
+    )
 
     class Meta:
         ordering = ["-detected_at"]
@@ -251,6 +371,10 @@ class MotionEvent(models.Model):
     @property
     def is_usable(self):
         return self.quality == self.Quality.USABLE
+
+    @property
+    def is_reviewed(self):
+        return self.reviewed_at is not None
 
     @property
     def best_face_size(self):

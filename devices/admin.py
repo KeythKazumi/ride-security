@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Camera, MotionEvent, NVR, Person, Sensor
+from .models import Camera, FaceCandidate, MotionEvent, NVR, Person, Sensor, Sighting
 
 
 @admin.register(NVR)
@@ -45,15 +45,35 @@ class CameraAdmin(admin.ModelAdmin):
 
 @admin.register(Person)
 class PersonAdmin(admin.ModelAdmin):
-    list_display = ("name", "reference_image", "created_at", "updated_at")
-    search_fields = ("name",)
+    list_display = ("display_name", "code", "auto_created", "sighting_count", "last_seen_at", "created_at")
+    list_filter = ("auto_created",)
+    search_fields = ("name", "code")
+    readonly_fields = ("code", "created_at", "updated_at")
+
+    @admin.display(description="Sightings")
+    def sighting_count(self, obj):
+        return obj.sightings.count()
+
+
+@admin.register(FaceCandidate)
+class FaceCandidateAdmin(admin.ModelAdmin):
+    list_display = ("code", "camera", "sighting_count", "first_seen_at", "last_seen_at")
+    list_filter = ("camera",)
+    readonly_fields = ("code", "first_seen_at", "last_seen_at")
+
+
+@admin.register(Sighting)
+class SightingAdmin(admin.ModelAdmin):
+    list_display = ("person", "event", "distance", "is_enrollment", "created_at")
+    list_filter = ("is_enrollment", "person")
+    readonly_fields = ("created_at",)
 
 
 @admin.register(MotionEvent)
 class MotionEventAdmin(admin.ModelAdmin):
-    list_display = ("id", "camera", "detected_at", "source", "status", "quality", "face_count", "best_face_size", "blur_score")
+    list_display = ("id", "camera", "detected_at", "source", "status", "quality", "face_count", "best_face_size", "blur_score", "reviewed_at")
     list_filter = ("status", "quality", "source", "camera")
-    readonly_fields = ("detected_at", "analyzed_at", "faces", "recognized")
+    readonly_fields = ("detected_at", "analyzed_at", "faces", "recognized", "reviewed_at")
     date_hierarchy = "detected_at"
 
     @admin.display(description="Best face")

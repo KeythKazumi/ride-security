@@ -44,6 +44,22 @@ services:
       - motion
     restart: unless-stopped
 
+  cleanup:
+    build: .
+    container_name: ride-security-cleanup
+    entrypoint: ["python", "manage.py", "cleanup_events", "--loop"]
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - db_data:/app/data
+      - deepface_weights:/root/.deepface
+    depends_on:
+      - web
+    profiles:
+      - motion
+    restart: unless-stopped
+
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: ride-security-tunnel

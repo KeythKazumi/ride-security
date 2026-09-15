@@ -15,6 +15,15 @@
                 {% if event.status == 'pending' %}Analyze now{% else %}Re-analyze{% endif %}
             </button>
         </form>
+        {% if event.status == 'analyzed' %}
+        <form method="post" action="{% url 'devices:event_review' event.id %}" class="inline-form">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-ghost">
+                {% if event.is_reviewed %}Withdraw confirmation{% else %}Confirm verdict{% endif %}
+            </button>
+        </form>
+        {% endif %}
+        <a href="{% url 'devices:event_delete' event.id %}" class="btn btn-danger">Delete</a>
     </div>
 </header>
 
@@ -40,6 +49,10 @@
             <span class="stat-value">{{ event.face_count }}</span>
         </div>
         <div class="stat-card">
+            <span class="stat-label">People seen</span>
+            <span class="stat-value">{{ event.persons|length }}</span>
+        </div>
+        <div class="stat-card">
             <span class="stat-label">Largest face</span>
             <span class="stat-value">{{ event.best_face_size|default:"—" }}</span>
         </div>
@@ -54,8 +67,29 @@
     </div>
 
     <div class="feed-meta">
-        <p><strong>Recognized:</strong> {{ event.recognized_display }}</p>
-        {% if event.quality == 'no_face' %}
+        <p><strong>Recognized:</strong>
+            {% if event.sightings.exists %}
+            {% for sighting in event.sightings.all %}
+            <a href="{% url 'devices:person_detail' sighting.person_id %}">{{ sighting.person.display_name }}</a>{% if not forloop.last %}, {% endif %}
+            {% endfor %}
+            {% else %}—{% endif %}
+        </p>
+        {% for sighting in event.sightings.all %}
+        {% if not sighting.person.is_named %}
+        <p class="alert alert-error">
+            This face has no name yet.
+            <a href="{% url 'devices:person_name' sighting.person_id %}">Name {{ sighting.person.display_name }}</a>.
+        </p>
+        {% endif %}
+        {% endfor %}
+        {% if event.is_reviewed %}
+        <p class="feed-meta">Verdict confirmed {{ event.reviewed_at|date:"Y-m-d H:i" }}{% if event.quality == 'no_face' %}
+            — this capture is deleted on the next scheduled cleanup.{% endif %}</p>
+        {% endif %}
+        {% if event.quality == 'person' %}
+        <p class="empty-state">Person-shaped movement was found but no usable face — likely backs turned, a cap or
+            helmet, or too far away. The capture is kept for review; it will not be auto-cleaned.</p>
+        {% elif event.quality == 'no_face' %}
         <p class="empty-state">No face was found in this frame. Motion alone does not mean a usable face — check
             framing, or trigger a capture while someone faces the camera.</p>
         {% elif event.quality == 'too_small' %}
@@ -78,10 +112,10 @@
         </div>
     </section>
 
-    {% if event.faces %}
+    {% if event.faces or event.persons %}
     <section class="panel">
         <div class="panel-header">
-            <h2>Detected faces</h2>
+            <h2>Annotated frame</h2>
         </div>
         <div class="camera-feed">
             <img src="{% url 'devices:event_annotated' event.id %}" alt="Annotated frame" class="camera-snapshot">

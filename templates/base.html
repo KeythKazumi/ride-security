@@ -25,6 +25,48 @@
                 <a href="{% url 'devices:events' %}" class="nav-link {% if request.resolver_match.url_name == 'events' or request.resolver_match.url_name == 'event_detail' %}active{% endif %}">
                     Events
                 </a>
+                <a href="{% url 'devices:people' %}" class="nav-link {% if request.resolver_match.url_name == 'people' or request.resolver_match.url_name == 'person_detail' or request.resolver_match.url_name == 'person_name' %}active{% endif %}">
+                    People
+                </a>
+                <details class="notif">
+                    <summary class="nav-link notif-summary">
+                        <span>Notifications</span>
+                        {% if notification_unread_count %}
+                        <span class="notif-count">{{ notification_unread_count }}</span>
+                        {% endif %}
+                    </summary>
+                    <div class="notif-panel">
+                        {% if notification_unread %}
+                        {% for note in notification_unread %}
+                        <div class="notif-item">
+                            <a href="{% url 'notifications:open' note.id %}" class="notif-item-title">{{ note.title }}</a>
+                            <p class="notif-item-body">{{ note.message }}</p>
+                            <div class="notif-item-meta">
+                                <span>{{ note.created_at|date:"M j, H:i" }}</span>
+                                <form method="post" action="{% url 'notifications:read' note.id %}">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                    <button type="submit" class="notif-link-btn">Mark read</button>
+                                </form>
+                            </div>
+                        </div>
+                        {% endfor %}
+                        <div class="notif-actions">
+                            <form method="post" action="{% url 'notifications:read_all' %}">
+                                {% csrf_token %}
+                                <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                                <button type="submit" class="notif-link-btn">Mark all read</button>
+                            </form>
+                            <a href="{% url 'notifications:list' %}" class="notif-link-btn">View all</a>
+                        </div>
+                        {% else %}
+                        <p class="notif-empty">Nothing unread.</p>
+                        <div class="notif-actions">
+                            <a href="{% url 'notifications:list' %}?show=all" class="notif-link-btn">View all</a>
+                        </div>
+                        {% endif %}
+                    </div>
+                </details>
                 <a href="{% url 'devices:sensors' %}" class="nav-link {% if request.resolver_match.url_name == 'sensors' %}active{% endif %}">
                     Sensors
                 </a>
