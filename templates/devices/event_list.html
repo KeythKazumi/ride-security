@@ -25,6 +25,10 @@
         <span class="stat-label">No face</span>
         <span class="stat-value">{{ stats.no_face }}</span>
     </div>
+    <div class="stat-card">
+        <span class="stat-label">Awaiting cleanup</span>
+        <span class="stat-value">{{ stats.to_cleanup }}</span>
+    </div>
 </div>
 
 <section class="panel">
@@ -44,6 +48,14 @@
                 {% endfor %}
             </select>
             <button type="submit" class="btn btn-sm btn-ghost">Filter</button>
+        </form>
+        <form method="post" action="{% url 'devices:event_review_no_face' %}" class="inline-form">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-ghost">Confirm all "no face"</button>
+        </form>
+        <form method="post" action="{% url 'devices:event_cleanup_now' %}" class="inline-form">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-ghost">Clean up now</button>
         </form>
     </div>
 
@@ -76,7 +88,10 @@
                     {{ event.get_source_display }}
                     {% if event.motion_score %}<br><small>score {{ event.motion_score|floatformat:4 }}</small>{% endif %}
                 </td>
-                <td>{{ event.face_count }}</td>
+                <td>
+                    {{ event.face_count }}
+                    {% if event.persons %}<br><small>{{ event.persons|length }} person{{ event.persons|length|pluralize }}</small>{% endif %}
+                </td>
                 <td>{{ event.best_face_size|default:"—" }}</td>
                 <td>{% if event.blur_score %}{{ event.blur_score|floatformat:1 }}{% else %}—{% endif %}</td>
                 <td>
@@ -87,6 +102,7 @@
                     {% else %}
                     <span class="badge badge-{{ event.quality }}">{{ event.get_quality_display }}</span>
                     {% endif %}
+                    {% if event.is_reviewed %}<br><small>confirmed ✓</small>{% endif %}
                 </td>
                 <td>{{ event.recognized_display }}</td>
             </tr>

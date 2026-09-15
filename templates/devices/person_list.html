@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}People — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>People</h1>
+    <p class="page-subtitle">The face database used for recognition</p>
+    <div class="header-actions">
+        <a href="{% url 'devices:person_add' %}" class="btn btn-primary">Enroll manually</a>
+    </div>
+</header>
+
+{% if unnamed %}
+<section class="panel">
+    <div class="panel-header">
+        <h2>Needs a name</h2>
+        <span class="badge badge-low_battery">{{ unnamed|length }}</span>
+    </div>
+    <p class="page-subtitle">
+        Detected more than once and added automatically. Naming them means future sightings get labelled.
+    </p>
+    <div class="face-grid">
+        {% for person in unnamed %}
+        <div class="face-card needs-name">
+            <a href="{% url 'devices:person_name' person.id %}">
+                <img src="{% url 'devices:person_image' person.id %}" alt="{{ person.display_name }}">
+            </a>
+            <div class="face-card-body">
+                <div class="face-card-name">{{ person.display_name }}</div>
+                <div class="face-card-meta">
+                    {{ person.sighting_total }} sighting{{ person.sighting_total|pluralize }}<br>
+                    {% if person.last_seen_at %}last {{ person.last_seen_at|date:"M j, H:i" }}{% endif %}
+                </div>
+                <a href="{% url 'devices:person_name' person.id %}" class="btn btn-sm btn-primary" style="margin-top:8px;">Name</a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+<section class="panel" style="margin-top: 20px;">
+    <div class="panel-header">
+        <h2>Known people</h2>
+        <span class="badge badge-normal">{{ named|length }}</span>
+    </div>
+    {% if named %}
+    <div class="face-grid">
+        {% for person in named %}
+        <div class="face-card">
+            <a href="{% url 'devices:person_detail' person.id %}">
+                <img src="{% url 'devices:person_image' person.id %}" alt="{{ person.display_name }}">
+            </a>
+            <div class="face-card-body">
+                <div class="face-card-name">{{ person.display_name }}</div>
+                <div class="face-card-meta">
+                    {{ person.sighting_total }} sighting{{ person.sighting_total|pluralize }}<br>
+                    {% if person.last_seen_at %}last {{ person.last_seen_at|date:"M j, H:i" }}{% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty-state">
+        Nobody named yet. Faces get added automatically once seen more than once, or
+        <a href="{% url 'devices:person_add' %}">enroll someone manually</a>.
+    </p>
+    {% endif %}
+</section>
+
+<section class="panel" style="margin-top: 20px;">
+    <div class="panel-header">
+        <h2>Candidates</h2>
+        <span class="badge badge-offline">{{ candidates|length }}</span>
+    </div>
+    <p class="page-subtitle">
+        Seen once so far. A candidate becomes a person on its second sighting, which keeps one-off
+        false detections out of the database.
+    </p>
+    {% if candidates %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Face</th>
+                <th>Camera</th>
+                <th>Sightings</th>
+                <th>First seen</th>
+                <th>Last seen</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for candidate in candidates %}
+            <tr>
+                <td><img src="{% url 'devices:candidate_image' candidate.id %}" alt="Candidate" class="face-thumb"></td>
+                <td>{{ candidate.camera.name|default:"—" }}</td>
+                <td>{{ candidate.sighting_count }} / {{ candidate.PROMOTE_AFTER_SIGHTINGS }}</td>
+                <td>{{ candidate.first_seen_at|date:"Y-m-d H:i" }}</td>
+                <td>{{ candidate.last_seen_at|date:"Y-m-d H:i" }}</td>
+                <td><a href="{% url 'devices:candidate_delete' candidate.id %}" class="btn btn-sm btn-ghost">Delete</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">No pending candidates.</p>
+    {% endif %}
+</section>
+{% endblock %}

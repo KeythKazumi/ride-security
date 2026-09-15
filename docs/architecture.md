@@ -28,17 +28,24 @@ flowchart TB
             dash_views["home()<br/>aggregate counts"]
         end
 
+        subgraph notif_app["notifications"]
+            notif_views["views.py<br/>list · open · read · read_all"]
+            notif_models["models.py<br/>Notification (+unread manager)"]
+            notif_ctx["context_processors.py<br/>unread count for every page"]
+        end
+
         subgraph devices_app["devices"]
-            dev_views["views.py<br/>camera / nvr / sensor CRUD<br/>feed · snapshot · stream · recognize<br/>event list / detail / capture"]
-            dev_forms["forms.py<br/>NVRForm · CameraForm · SensorForm"]
-            dev_models["models.py<br/>NVR · Camera · Sensor<br/>Person · MotionEvent"]
+            dev_views["views.py<br/>camera / nvr / sensor CRUD<br/>feed · snapshot · stream · recognize<br/>event list / detail / capture<br/>people list / detail / name"]
+            dev_forms["forms.py<br/>NVRForm · CameraForm · SensorForm<br/>PersonForm · PersonNameForm"]
+            dev_models["models.py<br/>NVR · Camera · Sensor · MotionEvent<br/>Person · FaceCandidate · Sighting"]
             dev_admin["admin.py<br/>Django admin (Person upload)"]
             discovery["discovery.py<br/>ONVIF WS-Discovery + TCP sweep"]
             services["services.py<br/>fetch_camera_snapshot()"]
             streaming["streaming.py<br/>generate_mjpeg_stream()<br/>get_rtsp_frame()"]
-            facerec["face_recognition.py<br/>recognize_people()<br/>detect_faces() · assess_capture()<br/>draw_recognized_faces()"]
+            facerec["face_recognition.py (ORM-free)<br/>search_faces() · detect_faces() (opencv→mtcnn)<br/>detect_persons() (SSD + HOG) · assess_capture()<br/>face_quality() · crop_face() · draw_recognized_faces()"]
+            identities["identities.py<br/>identify_faces() · register_sightings()<br/>observe_candidate() · promote_candidate()<br/>merge_persons() · name_person()"]
             motion["motion.py<br/>iter_motion_events()<br/>MOG2 frame diff + sharpest pick"]
-            events["events.py<br/>record_motion_event()<br/>analyze_event() · process_pending()"]
+            events["events.py<br/>record_motion_event() · analyze_event()<br/>process_pending() · cleanup_reviewed_events()"]
             mgmt["management/commands<br/>discover_nvrs"]
         end
     end
@@ -46,11 +53,13 @@ flowchart TB
     subgraph workers["Worker processes (compose profile: motion)"]
         watcher["manage.py watch_motion<br/>one thread per camera"]
         processor["manage.py process_events --loop<br/>deferred analysis"]
+        cleaner["manage.py cleanup_events --loop<br/>purge confirmed no-face captures"]
     end
 
     subgraph storage["Persistence (volumes)"]
         db[("SQLite<br/>db_data → /app/data")]
-        media[("MEDIA_ROOT/persons/&lt;name&gt;/<br/>reference images = DeepFace db")]
+        media[("MEDIA_ROOT/persons/&lt;code&gt;/<br/>reference images = DeepFace db")]
+        candidates[("MEDIA_ROOT/candidates/&lt;code&gt;/<br/>faces awaiting a 2nd sighting")]
         captures[("MEDIA_ROOT/events/camera_&lt;id&gt;/<br/>captured frames")]
         weights[("deepface_weights<br/>/root/.deepface")]
     end
@@ -88,14 +97,27 @@ flowchart TB
     dev_views --> events
     mgmt --> discovery
 
+    urls --> notif_views
+    notif_views --> notif_models --> db
+    notif_ctx -- "unread count on every page" --> browser
+    notif_ctx --> notif_models
+
     watcher --> motion
     watcher -- "record only" --> events
     processor -- "analyze pending" --> events
     motion --> cv2
     events --> facerec
+    events --> identities
     events --> services
     events --> dev_models
     events -- "store frame" --> captures
+
+    identities --> facerec
+    identities --> dev_models
+    identities -- "enrol / promote" --> media
+    identities -- "unmatched face" --> candidates
+    identities -- "new unnamed person" --> notif_models
+    deepface --> candidates
 
     services -- "HTTP snapshot" --> requests --> nvr_dev
     services -- "fallback single frame" --> streaming
@@ -126,12 +148,12 @@ flowchart TB
     class browser client;
     class cf edge;
     class urls routing;
-    class acc_views,dash_views,dev_views,dev_admin view;
+    class acc_views,dash_views,dev_views,dev_admin,notif_views view;
     class dev_forms form;
-    class dev_models model;
-    class discovery,services,streaming,facerec,motion,events,mgmt service;
+    class dev_models,notif_models model;
+    class discovery,services,streaming,facerec,motion,events,identities,notif_ctx,mgmt service;
     class watcher,processor worker;
-    class db,media,captures,weights store;
+    class db,media,candidates,captures,weights store;
     class cv2,deepface,requests lib;
     class nvr_dev,cams,sensors_dev device;
 
@@ -141,6 +163,7 @@ flowchart TB
     style accounts_app fill:#ffffff,stroke:#cbd5e1,color:#0f172a;
     style dashboard_app fill:#ffffff,stroke:#cbd5e1,color:#0f172a;
     style devices_app fill:#ffffff,stroke:#cbd5e1,color:#0f172a;
+    style notif_app fill:#ffffff,stroke:#cbd5e1,color:#0f172a;
     style storage fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
     style libs fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
     style lan fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
@@ -154,12 +177,12 @@ flowchart TB
 | Blue | Client | browser |
 | Orange (dashed) | Optional edge / external service | cloudflared |
 | Indigo | URL routing | `config/urls.py` |
-| Green | Views / controllers | app views, Django admin |
+| Green | Views / controllers | app views, Django admin, notification views |
 | Amber | Forms | `devices/forms.py` |
-| Purple | Models (ORM) | `devices/models.py` |
-| Teal | Service modules (I/O, no ORM) | discovery, services, streaming, face_recognition, motion, events, mgmt command |
-| Cyan | Long-running worker processes | watch_motion, process_events |
-| Slate | Persistence / volumes | SQLite, media, captures, DeepFace weights |
+| Purple | Models (ORM) | `devices/models.py`, `notifications/models.py` |
+| Teal | Service modules | discovery, services, streaming, face_recognition, motion, events, identities, context processor, mgmt command |
+| Cyan | Long-running worker processes | watch_motion, process_events, cleanup_events |
+| Slate | Persistence / volumes | SQLite, person references, candidates, captures, DeepFace weights |
 | Pink | Third-party runtime libs | OpenCV, DeepFace, requests |
 | Red (dashed) | Physical LAN hardware | NVR, cameras, sensors |
 
@@ -171,12 +194,25 @@ flowchart TB
   (`/recognize/`) or against a stored `MotionEvent`.
 - Capture and analysis are decoupled: `watch_motion` only writes rows, `process_events`
   analyses them. A `MotionEvent` is therefore `pending` for a while, by design.
-- The DeepFace "database" is the `MEDIA_ROOT/persons/<name>/` directory tree created by
-  `Person.reference_image` uploads — `Person` rows and the folder layout are coupled by
-  `_person_upload_to`.
-- `Person` has no frontend view; it is managed through Django admin only.
+- The DeepFace "database" is the `MEDIA_ROOT/persons/<code>/` directory tree created by
+  `Person.reference_image` uploads — keyed on the immutable `code` so renaming a person
+  never orphans their references.
+- Storage is bounded by user confirmation: `cleanup_events` only deletes an event when
+  it is `analyzed`, verdict `no_face`, *and* `reviewed_at` is set (a user agreed). Re-analysis
+  clears `reviewed_at`, so a changed verdict is never auto-deleted on stale confirmation.
 - The motion watcher opens its own RTSP connection per camera, independent of any browser
   viewing `/stream/`. Two viewers plus the watcher means three connections to the NVR.
+- Reference directories are keyed on `Person.code`, never the name. DeepFace derives
+  identity from the directory name, so a rename would otherwise orphan the references.
+  `face_recognition` therefore only ever speaks in codes; `identities` maps them to rows.
+- `Notification` is not per-user. This is a single-operator install, so read/unread is
+  global.
+- Auto-enrolment will still produce more than one identity per real person — different
+  angles and lighting cross the cosine threshold. That is why naming and merging are the
+  same form.
+- Any structural change to a face database (promote, merge, delete) calls
+  `invalidate_db_cache`, because DeepFace pickles embeddings next to the images and would
+  otherwise keep matching identities that have moved.
 
 ---
 
@@ -363,7 +399,74 @@ sequenceDiagram
     DB-->>U: thumbnails + verdict per capture
 ```
 
-### 2.5 LAN discovery → add NVR
+### 2.5 Building the face database (auto-enrolment)
+
+Runs inside `analyze_event`, once per detected face.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant E as events.analyze_event
+    participant I as identities
+    participant FR as face_recognition
+    participant PDB as persons/CODE/
+    participant CDB as candidates/CODE/
+    participant DB as Person / FaceCandidate / Sighting
+    participant N as Notification
+    actor U as User
+
+    E->>I: identify_faces(image, detected boxes)
+    alt at least one Person enrolled
+        I->>FR: search_faces(image, persons)
+        FR-->>I: per face: code + distance vs threshold
+    else database empty
+        Note over I: every face is unmatched
+    end
+
+    E->>I: register_sightings(event, matches, image)
+    I->>DB: delete existing sightings (re-analysis is idempotent)
+
+    loop each face
+        alt matched a known code
+            I->>DB: Sighting(event, person, distance)
+            I->>DB: person.last_seen_at = event.detected_at
+        else unmatched
+            I->>FR: face_quality(image, box)
+            alt face under 80px or blurrier than 40
+                Note over I: dropped — too weak to enrol
+            else good enough
+                I->>FR: crop_face(image, box, margin 0.3)
+                I->>FR: search_faces(crop, candidates)
+                alt no candidate matches
+                    I->>CDB: write crop
+                    I->>DB: FaceCandidate(sighting_count=1)
+                    Note over I: no Person yet — one sighting is not evidence
+                else candidate matches
+                    I->>DB: candidate.sighting_count += 1
+                    alt still below 2 sightings
+                        Note over I: keep waiting
+                    else 2nd sighting reached
+                        I->>PDB: move crop into a new persons/CODE/
+                        I->>DB: Person(auto_created=True, name="")
+                        I->>DB: delete candidate + its directory
+                        I->>FR: invalidate_db_cache(persons, candidates)
+                        I->>DB: Sighting(is_enrollment=True)
+                        I->>N: "New face detected" linking to the naming form
+                    end
+                end
+            end
+        end
+    end
+
+    I-->>E: sightings, promoted people
+    E->>DB: save faces JSON + recognized display names
+
+    U->>N: sees unread badge, opens notification
+    U->>DB: names the person, or merges into an existing one
+    Note over DB: naming marks the notification read<br/>merging moves references and repoints sightings
+```
+
+### 2.6 LAN discovery → add NVR
 
 ```mermaid
 sequenceDiagram
@@ -481,11 +584,59 @@ classDiagram
     }
 
     class Person {
-        +CharField name
+        +CharField code (unique, immutable)
+        +CharField name (blank until labelled)
         +ImageField reference_image
+        +BooleanField auto_created = False
+        +DateTimeField last_seen_at?
         +DateTimeField created_at
         +DateTimeField updated_at
+        +is_named bool
+        +display_name str
         +__str__() str
+    }
+
+    class FaceCandidate {
+        <<holding area>>
+        PROMOTE_AFTER_SIGHTINGS = 2
+        +CharField code (unique)
+        +ImageField image
+        +FK camera? (SET_NULL)
+        +PositiveIntegerField sighting_count = 1
+        +DateTimeField first_seen_at
+        +DateTimeField last_seen_at
+        +ready_to_promote bool
+        +__str__() str
+    }
+
+    class Sighting {
+        +FK event (CASCADE, related_name=sightings)
+        +FK person (CASCADE, related_name=sightings)
+        +FloatField distance?
+        +JSONField box
+        +BooleanField is_enrollment = False
+        +DateTimeField created_at
+        +__str__() str
+    }
+
+    class Notification {
+        <<notifications app>>
+        +CharField kind = INFO
+        +CharField title
+        +TextField message
+        +CharField url
+        +BooleanField is_read = False
+        +DateTimeField read_at?
+        +DateTimeField created_at
+        +mark_read() Notification
+        +mark_unread() Notification
+    }
+
+    class NotificationKind {
+        <<TextChoices>>
+        NEW_PERSON
+        INFO
+        WARNING
     }
 
     class MotionEvent {
@@ -504,7 +655,10 @@ classDiagram
         +CharField quality = UNKNOWN
         +JSONField faces = list
         +JSONField recognized = list
+        +JSONField persons = list
+        +DateTimeField reviewed_at?
         +is_usable bool
+        +is_reviewed bool
         +best_face_size str?
         +recognized_display str
         +__str__() str
@@ -529,6 +683,7 @@ classDiagram
         <<TextChoices>>
         UNKNOWN
         USABLE
+        PERSON
         NO_FACE
         TOO_SMALL
         TOO_BLURRY
@@ -543,9 +698,18 @@ classDiagram
     Model <|-- Sensor
     Model <|-- Person
     Model <|-- MotionEvent
+    Model <|-- FaceCandidate
+    Model <|-- Sighting
+    Model <|-- Notification
 
     NVR "0..1" o-- "0..*" Camera : cameras
     Camera "1" *-- "0..*" MotionEvent : motion_events
+    Camera "0..1" o-- "0..*" FaceCandidate : face_candidates
+    MotionEvent "1" *-- "0..*" Sighting : sightings
+    Person "1" *-- "0..*" Sighting : sightings
+    FaceCandidate ..> Person : promoted after 2 sightings
+    Person ..> Notification : raises NEW_PERSON when auto-created
+    Notification ..> NotificationKind
     Camera ..> CameraStatus
     Sensor ..> SensorType
     Sensor ..> SensorStatus
@@ -643,18 +807,43 @@ classDiagram
     }
 
     class face_recognition {
-        <<module>>
+        <<module, no ORM>>
         MIN_FACE_PX = 80
         MIN_FACE_SHARPNESS = 40.0
         MIN_DETECTION_CONFIDENCE = 0.01
-        -_reference_db_path() Path
-        -_ensure_db_exists() Path
+        PERSON_DB = persons
+        CANDIDATE_DB = candidates
         -_load_image(path_or_bytes) ndarray
         -_sharpness(image) float
+        +db_path(name, ensure) Path
+        +invalidate_db_cache(name)
+        +search_faces(image_path, db_name) list~Match~
         +detect_faces(image_path) list~Face~
         +assess_capture(image_path) Assessment
-        +recognize_people(image_path) list~Face~
+        +face_quality(image_path, box) dict
+        +crop_face(image_path, box, margin) bytes?
         +draw_recognized_faces(image_path, faces) bytes?
+    }
+
+    class identities {
+        <<module, ORM + DeepFace>>
+        +label_faces(faces) list
+        +identify_faces(image_path, boxes) list~Match~
+        +register_sightings(event, matches, image_path) tuple
+        +observe_candidate(image_path, box, event) Person?
+        +promote_candidate(candidate, crop) Person
+        +merge_persons(source, target) Person
+        +name_person(person, name) Person
+        +delete_person(person)
+    }
+
+    class Match {
+        <<dict>>
+        code : str or None
+        matched : bool
+        distance : float
+        threshold : float
+        box : x, y, w, h
     }
 
     class motion {
@@ -711,9 +900,12 @@ classDiagram
     services ..> streaming : RTSP fallback
     face_recognition ..> Face : returns
     face_recognition ..> Assessment : returns
+    face_recognition ..> Match : returns
     motion ..> streaming : reuses _open_capture
-    events ..> face_recognition : detect + recognize
+    events ..> face_recognition : detect + score
+    events ..> identities : identify + enrol
     events ..> services : snapshot when no frame supplied
+    identities ..> face_recognition : codes in, never names
     discovery ..> discovery : suggest_ports maps to NVR fields
 ```
 
@@ -738,6 +930,22 @@ classDiagram
 | `/devices/events/{id}/image/` | `event_image` | stored frame |
 | `/devices/events/{id}/annotated/` | `event_annotated` | frame with face boxes |
 | `/devices/events/{id}/analyze/` | `event_analyze` | POST: analyze now |
+| `/devices/events/{id}/review/` | `event_review` | POST: toggle user confirmation |
+| `/devices/events/{id}/delete/` | `event_delete` | remove capture + stored frame |
+| `/devices/events/review-no-face/` | `event_review_no_face` | POST: confirm every no-face verdict |
+| `/devices/events/cleanup/` | `event_cleanup_now` | POST: run the purge immediately |
+| `/devices/people/` | `person_list` | face database: unnamed, named, candidates |
+| `/devices/people/add/` | `person_create` | manual enrolment |
+| `/devices/people/{id}/` | `person_detail` | reference + every sighting |
+| `/devices/people/{id}/image/` | `person_image` | reference image |
+| `/devices/people/{id}/name/` | `person_name` | name, or merge into another person |
+| `/devices/people/{id}/delete/` | `person_delete` | remove identity + directory |
+| `/devices/candidates/{id}/image/` | `candidate_image` | pending candidate crop |
+| `/devices/candidates/{id}/delete/` | `candidate_delete` | remove candidate + directory |
+| `/notifications/` | `notification_list` | unread by default, `?show=all` for everything |
+| `/notifications/{id}/open/` | `notification_open` | mark read then follow the link |
+| `/notifications/{id}/read/` | `notification_mark_read` | POST |
+| `/notifications/read-all/` | `notification_mark_all_read` | POST |
 | `/devices/sensors/…` | `sensor_*` | CRUD |
 | `/devices/nvrs/…` | `nvr_*` | CRUD |
 | `/devices/nvrs/discover/` | `nvr_discover` | LAN scan |
@@ -754,6 +962,7 @@ All device/dashboard views are `@login_required`.
 | `manage.py discover_nvrs [--network CIDR]` | one-shot LAN scan |
 | `manage.py watch_motion [--camera ID] [--min-area] [--cooldown] [--sample-fps] [--analyze]` | long-running motion watcher, one thread per camera |
 | `manage.py process_events [--limit N] [--loop] [--interval S]` | analyse pending captures |
+| `manage.py cleanup_events [--loop] [--interval S] [--dry-run]` | delete confirmed no-face captures (default interval: 6h) |
 
-`watch_motion` and `process_events` also exist as compose services behind the
-`motion` profile: `docker compose --profile motion up -d`.
+`watch_motion`, `process_events` and `cleanup_events` also exist as compose services
+behind the `motion` profile: `docker compose --profile motion up -d`.

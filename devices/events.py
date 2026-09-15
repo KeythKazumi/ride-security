@@ -18,8 +18,9 @@ from contextlib import contextmanager
 from django.core.files.base import ContentFile
 from django.utils import timezone
 
-from .face_recognition import assess_capture, draw_recognized_faces, recognize_people
-from .models import MotionEvent, Person
+from .face_recognition import assess_capture, draw_recognized_faces
+from .identities import identify_faces, label_faces, register_sightings
+from .models import MotionEvent
 from .services import fetch_camera_snapshot
 
 logger = logging.getLogger(__name__)
@@ -68,45 +69,58 @@ def record_motion_event(camera, source, image_bytes=None, motion_score=None):
 
 
 def analyze_event(event):
-    """Run face detection, quality scoring and recognition on a stored event.
+    """Score a capture, then match every face against the identity database.
 
-    Detection runs unconditionally so we get a quality verdict even with zero
-    enrolled people; recognition only runs when there is something to match
-    against and a face was actually found.
+    Detection always runs so a quality verdict exists even with nothing
+    enrolled. Identification then either links a known `Person` or feeds the
+    face into the candidate pipeline, which may auto-create a person.
     """
     try:
         with _as_temp_file(_event_bytes(event)) as image_path:
             assessment = assess_capture(image_path)
-            faces = assessment["faces"]
+            detected = assessment["faces"]
 
-            if faces and Person.objects.exists():
-                matches = recognize_people(image_path)
-                if matches:
-                    faces = matches
-                event.recognized = sorted(
-                    {m["name"] for m in matches if m.get("name") and m["name"] != "Unknown"}
-                )
+            event.face_count = assessment["face_count"]
+            best_box = assessment["best_box"]
+            event.best_face_width = best_box[2] if best_box else 0
+            event.best_face_height = best_box[3] if best_box else 0
+            event.blur_score = assessment["best_sharpness"]
+            event.quality = assessment["quality"]
+            event.persons = assessment["persons"]
+
+            # `event` must be saved before sightings can reference it.
+            event.status = MotionEvent.Status.ANALYZED
+            event.error = ""
+            event.analyzed_at = timezone.now()
+            # A new verdict invalidates any earlier user confirmation.
+            event.reviewed_at = None
+            event.save()
+
+            if detected:
+                matches = identify_faces(image_path, [face["box"] for face in detected])
+                register_sightings(event, matches, image_path)
+                faces = label_faces(matches)
             else:
-                event.recognized = []
+                event.sightings.all().delete()
+                faces = []
 
-        event.face_count = assessment["face_count"]
-        best_box = assessment["best_box"]
-        event.best_face_width = best_box[2] if best_box else 0
-        event.best_face_height = best_box[3] if best_box else 0
-        event.blur_score = assessment["best_sharpness"]
-        event.quality = assessment["quality"]
+        sharpness_by_box = {tuple(face["box"]): face.get("sharpness") for face in detected}
         event.faces = [
             {
                 "box": list(face["box"]),
                 "name": face.get("name"),
-                "confidence": face.get("confidence"),
+                "code": face.get("code"),
                 "distance": face.get("distance"),
-                "sharpness": face.get("sharpness"),
+                "sharpness": sharpness_by_box.get(tuple(face["box"])),
             }
             for face in faces
         ]
-        event.status = MotionEvent.Status.ANALYZED
-        event.error = ""
+        event.recognized = sorted(
+            {
+                sighting.person.display_name
+                for sighting in event.sightings.select_related("person")
+            }
+        )
     except Exception as exc:
         logger.exception("Analysis failed for event %s", event.pk)
         event.status = MotionEvent.Status.FAILED
@@ -118,11 +132,11 @@ def analyze_event(event):
 
 
 def annotate_event(event):
-    """Return the event image with face boxes drawn, or None."""
-    if not event.faces:
+    """Return the event image with face/person boxes drawn, or None."""
+    if not event.faces and not event.persons:
         return None
     with _as_temp_file(_event_bytes(event)) as image_path:
-        return draw_recognized_faces(image_path, event.faces)
+        return draw_recognized_faces(image_path, event.faces, persons=event.persons)
 
 
 def process_pending(limit=None):
@@ -134,3 +148,40 @@ def process_pending(limit=None):
         queryset = queryset[:limit]
 
     return [analyze_event(event) for event in queryset]
+
+
+def delete_event(event):
+    """Remove a capture and its stored frame. Returns bytes freed.
+
+    Django does not remove files when a row is deleted, so the image is
+    deleted explicitly first.
+    """
+    try:
+        freed = event.image.size
+    except (OSError, ValueError):
+        freed = 0
+    event.image.delete(save=False)
+    event.delete()
+    return freed
+
+
+def cleanup_candidates():
+    """Analyzed no-face events a user has confirmed — safe to purge."""
+    return MotionEvent.objects.filter(
+        status=MotionEvent.Status.ANALYZED,
+        quality=MotionEvent.Quality.NO_FACE,
+        reviewed_at__isnull=False,
+    )
+
+
+def cleanup_reviewed_events(queryset=None):
+    """Delete confirmed no-face captures and their image files.
+
+    Returns (events_removed, bytes_freed).
+    """
+    removed = 0
+    freed = 0
+    for event in (queryset if queryset is not None else cleanup_candidates()).iterator():
+        freed += delete_event(event)
+        removed += 1
+    return removed, freed

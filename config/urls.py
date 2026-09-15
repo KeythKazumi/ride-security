@@ -8,6 +8,7 @@ urlpatterns = [
     path("accounts/", include("accounts.urls")),
     path("devices/", include("devices.urls")),
     path("dashboard/", include("dashboard.urls")),
+    path("notifications/", include("notifications.urls")),
     path("", RedirectView.as_view(pattern_name="dashboard:home", permanent=False)),
 ]
 

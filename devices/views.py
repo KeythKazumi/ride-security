@@ -3,14 +3,30 @@ import tempfile
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db.models import Count
 from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 
 from .discovery import discover_devices, get_local_networks
-from .events import analyze_event, annotate_event, record_motion_event
-from .face_recognition import draw_recognized_faces, recognize_people
-from .forms import CameraForm, NVRForm, SensorForm
-from .models import Camera, MotionEvent, NVR, Sensor
+from .events import (
+    analyze_event,
+    annotate_event,
+    cleanup_candidates,
+    cleanup_reviewed_events,
+    delete_event,
+    record_motion_event,
+)
+from .face_recognition import draw_recognized_faces, invalidate_db_cache, search_faces
+from .forms import CameraForm, NVRForm, PersonForm, PersonNameForm, SensorForm
+from .identities import (
+    delete_candidate,
+    delete_person,
+    label_faces,
+    merge_persons,
+    name_person,
+)
+from .models import Camera, FaceCandidate, MotionEvent, NVR, Person, Sensor
 from .services import fetch_camera_snapshot
 from .streaming import generate_mjpeg_stream
 
@@ -72,7 +88,7 @@ def camera_recognize(request, camera_id):
             tmp.write(image_bytes)
             tmp_path = tmp.name
 
-        faces = recognize_people(tmp_path)
+        faces = label_faces(search_faces(tmp_path))
         annotated = draw_recognized_faces(tmp_path, faces)
     finally:
         if tmp_path and os.path.exists(tmp_path):
@@ -110,6 +126,7 @@ def event_list(request):
                 "pending": all_events.filter(status=MotionEvent.Status.PENDING).count(),
                 "usable": all_events.filter(quality=MotionEvent.Quality.USABLE).count(),
                 "no_face": all_events.filter(quality=MotionEvent.Quality.NO_FACE).count(),
+                "to_cleanup": cleanup_candidates().count(),
             },
         },
     )
@@ -157,6 +174,76 @@ def event_analyze(request, event_id):
 
 
 @login_required
+def event_review(request, event_id):
+    """Toggle the user's confirmation of an event's verdict.
+
+    Confirmed no-face events become eligible for the scheduled cleanup.
+    """
+    event = get_object_or_404(MotionEvent, pk=event_id)
+    if request.method != "POST":
+        return redirect("devices:event_detail", event_id=event.pk)
+
+    if event.is_reviewed:
+        event.reviewed_at = None
+        messages.info(request, "Confirmation withdrawn — this capture is kept.")
+    else:
+        event.reviewed_at = timezone.now()
+        if event.quality == MotionEvent.Quality.NO_FACE:
+            messages.success(request, "Verdict confirmed — this capture will be removed on the next cleanup pass.")
+        else:
+            messages.success(request, "Verdict confirmed.")
+    event.save(update_fields=["reviewed_at"])
+    return redirect("devices:event_detail", event_id=event.pk)
+
+
+@login_required
+def event_review_no_face(request):
+    """Bulk-confirm every analyzed 'no face' verdict not yet reviewed."""
+    if request.method != "POST":
+        return redirect("devices:events")
+
+    updated = MotionEvent.objects.filter(
+        status=MotionEvent.Status.ANALYZED,
+        quality=MotionEvent.Quality.NO_FACE,
+        reviewed_at__isnull=True,
+    ).update(reviewed_at=timezone.now())
+    messages.success(
+        request,
+        f"Confirmed {updated} 'no face' verdict(s) — they go away on the next cleanup pass.",
+    )
+    return redirect("devices:events")
+
+
+@login_required
+def event_cleanup_now(request):
+    """Run the same purge the scheduled task runs, immediately."""
+    if request.method != "POST":
+        return redirect("devices:events")
+
+    removed, freed = cleanup_reviewed_events()
+    if removed:
+        messages.success(request, f"Removed {removed} confirmed capture(s), freed {freed / 1024:.0f} KB.")
+    else:
+        messages.info(request, "Nothing confirmed for cleanup.")
+    return redirect("devices:events")
+
+
+@login_required
+def event_delete(request, event_id):
+    """Remove a single capture and its stored frame, regardless of verdict."""
+    event = get_object_or_404(MotionEvent, pk=event_id)
+    if request.method == "POST":
+        delete_event(event)
+        messages.success(request, f"Capture {event_id} removed.")
+        return redirect("devices:events")
+    return render(
+        request,
+        "devices/confirm_delete.html",
+        {"object": event, "type": "capture", "list_url": "devices:events"},
+    )
+
+
+@login_required
 def event_capture(request, camera_id):
     """Capture a frame on demand and analyze it immediately.
 
@@ -178,6 +265,137 @@ def event_capture(request, camera_id):
     else:
         messages.success(request, f"Captured and analyzed: {event.get_quality_display()}.")
     return redirect("devices:event_detail", event_id=event.pk)
+
+
+@login_required
+def person_list(request):
+    """The face database. Unnamed people first — those are the ones needing action."""
+    people = Person.objects.annotate(sighting_total=Count("sightings")).order_by(
+        "name", "-last_seen_at"
+    )
+    unnamed = [person for person in people if not person.is_named]
+    named = [person for person in people if person.is_named]
+
+    return render(
+        request,
+        "devices/person_list.html",
+        {
+            "unnamed": unnamed,
+            "named": named,
+            "candidates": FaceCandidate.objects.select_related("camera"),
+        },
+    )
+
+
+@login_required
+def person_detail(request, person_id):
+    person = get_object_or_404(Person, pk=person_id)
+    return render(
+        request,
+        "devices/person_detail.html",
+        {
+            "person": person,
+            "sightings": person.sightings.select_related("event", "event__camera")[:60],
+            "sighting_total": person.sightings.count(),
+        },
+    )
+
+
+@login_required
+def person_image(request, person_id):
+    person = get_object_or_404(Person, pk=person_id)
+    if not person.reference_image:
+        return HttpResponse("No reference image", status=404, content_type="text/plain")
+    person.reference_image.open("rb")
+    try:
+        return HttpResponse(person.reference_image.read(), content_type="image/jpeg")
+    finally:
+        person.reference_image.close()
+
+
+@login_required
+def candidate_image(request, candidate_id):
+    candidate = get_object_or_404(FaceCandidate, pk=candidate_id)
+    candidate.image.open("rb")
+    try:
+        return HttpResponse(candidate.image.read(), content_type="image/jpeg")
+    finally:
+        candidate.image.close()
+
+
+@login_required
+def candidate_delete(request, candidate_id):
+    """Discard a face candidate — e.g. a false positive or someone unwanted."""
+    candidate = get_object_or_404(FaceCandidate, pk=candidate_id)
+    if request.method == "POST":
+        delete_candidate(candidate)
+        messages.success(request, "Candidate removed.")
+        return redirect("devices:people")
+    return render(
+        request,
+        "devices/confirm_delete.html",
+        {"object": candidate, "type": "candidate", "list_url": "devices:people"},
+    )
+
+
+@login_required
+def person_name(request, person_id):
+    """Name an auto-created person, or merge them into an existing one."""
+    person = get_object_or_404(Person, pk=person_id)
+
+    if request.method == "POST":
+        form = PersonNameForm(request.POST, instance=person)
+        if form.is_valid():
+            merge_into = form.cleaned_data.get("merge_into")
+            if merge_into:
+                merge_persons(person, merge_into)
+                messages.success(request, f"Merged into '{merge_into.display_name}'.")
+                return redirect("devices:person_detail", person_id=merge_into.pk)
+
+            name_person(person, form.cleaned_data["name"])
+            messages.success(request, f"Named '{person.display_name}'.")
+            return redirect("devices:person_detail", person_id=person.pk)
+    else:
+        form = PersonNameForm(instance=person)
+
+    return render(
+        request,
+        "devices/person_name.html",
+        {
+            "form": form,
+            "person": person,
+            "sightings": person.sightings.select_related("event", "event__camera")[:12],
+        },
+    )
+
+
+@login_required
+def person_create(request):
+    if request.method == "POST":
+        form = PersonForm(request.POST, request.FILES)
+        if form.is_valid():
+            person = form.save()
+            invalidate_db_cache()
+            messages.success(request, f"Enrolled '{person.display_name}'.")
+            return redirect("devices:people")
+    else:
+        form = PersonForm()
+    return render(request, "devices/person_form.html", {"form": form})
+
+
+@login_required
+def person_delete(request, person_id):
+    person = get_object_or_404(Person, pk=person_id)
+    if request.method == "POST":
+        label = person.display_name
+        delete_person(person)
+        messages.success(request, f"Removed '{label}'.")
+        return redirect("devices:people")
+    return render(
+        request,
+        "devices/confirm_delete.html",
+        {"object": person, "type": "person", "list_url": "devices:people"},
+    )
 
 
 @login_required

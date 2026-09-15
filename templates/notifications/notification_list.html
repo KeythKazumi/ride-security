@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block title %}Notifications — Ride Security{% endblock %}
+
+{% block content %}
+<header class="page-header">
+    <h1>Notifications</h1>
+    <p class="page-subtitle">{{ unread_total }} unread of {{ total }}</p>
+    <div class="header-actions">
+        {% if show_all %}
+        <a href="{% url 'notifications:list' %}" class="btn btn-ghost">Unread only</a>
+        {% else %}
+        <a href="{% url 'notifications:list' %}?show=all" class="btn btn-ghost">Show all</a>
+        {% endif %}
+        {% if unread_total %}
+        <form method="post" action="{% url 'notifications:read_all' %}" class="inline-form">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <button type="submit" class="btn btn-primary">Mark all read</button>
+        </form>
+        {% endif %}
+    </div>
+</header>
+
+<section class="panel">
+    {% if notifications %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Message</th>
+                <th>When</th>
+                <th>Status</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for note in notifications %}
+            <tr class="{% if not note.is_read %}notif-row-unread{% endif %}">
+                <td><span class="badge badge-{% if note.kind == 'warning' %}triggered{% else %}offline{% endif %}">{{ note.get_kind_display }}</span></td>
+                <td>
+                    {% if note.url %}
+                    <strong><a href="{% url 'notifications:open' note.id %}">{{ note.title }}</a></strong>
+                    {% else %}
+                    <strong>{{ note.title }}</strong>
+                    {% endif %}
+                    {% if note.message %}<br><small>{{ note.message }}</small>{% endif %}
+                </td>
+                <td>{{ note.created_at|date:"Y-m-d H:i" }}</td>
+                <td>
+                    {% if note.is_read %}
+                    <span class="badge badge-normal">Read</span>
+                    {% else %}
+                    <span class="badge badge-low_battery">Unread</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if not note.is_read %}
+                    <form method="post" action="{% url 'notifications:read' note.id %}" class="inline-form">
+                        {% csrf_token %}
+                        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                        <button type="submit" class="btn btn-sm btn-ghost">Mark read</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">
+        {% if show_all %}No notifications yet.{% else %}Nothing unread. <a href="{% url 'notifications:list' %}?show=all">Show all</a>.{% endif %}
+    </p>
+    {% endif %}
+</section>
+{% endblock %}
