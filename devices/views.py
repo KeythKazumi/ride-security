@@ -6,6 +6,7 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Count
 from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 
 from .discovery import discover_devices, get_local_networks
@@ -16,17 +17,30 @@ from .events import (
     cleanup_reviewed_events,
     delete_event,
     record_motion_event,
+    sighting_face_crop,
 )
-from .face_recognition import draw_recognized_faces, invalidate_db_cache, search_faces
+from .face_recognition import (
+    PERSON_DB,
+    db_path,
+    draw_recognized_faces,
+    invalidate_db_cache,
+    search_faces,
+)
 from .forms import CameraForm, NVRForm, PersonForm, PersonNameForm, SensorForm
 from .identities import (
+    add_person_reference,
+    approve_sighting,
     delete_candidate,
     delete_person,
+    delete_person_reference,
     label_faces,
     merge_persons,
     name_person,
+    person_references,
+    promote_candidate,
+    reject_sighting,
 )
-from .models import Camera, FaceCandidate, MotionEvent, NVR, Person, Sensor
+from .models import Camera, FaceCandidate, MotionEvent, NVR, Person, Sensor, Sighting
 from .services import fetch_camera_snapshot
 from .streaming import generate_mjpeg_stream
 
@@ -229,6 +243,28 @@ def event_cleanup_now(request):
 
 
 @login_required
+def event_bulk_delete(request):
+    """Delete every capture ticked on the list page in one POST."""
+    if request.method != "POST":
+        return redirect("devices:events")
+
+    ids = request.POST.getlist("event_ids")
+    if not ids:
+        messages.info(request, "No captures selected.")
+        return redirect("devices:events")
+
+    removed, freed = 0, 0
+    for event in MotionEvent.objects.filter(pk__in=ids):
+        freed += delete_event(event)
+        removed += 1
+    messages.success(request, f"Removed {removed} capture(s), freed {freed / 1024:.0f} KB.")
+
+    url = reverse("devices:events")
+    query = request.GET.urlencode()
+    return redirect(f"{url}?{query}" if query else url)
+
+
+@login_required
 def event_delete(request, event_id):
     """Remove a single capture and its stored frame, regardless of verdict."""
     event = get_object_or_404(MotionEvent, pk=event_id)
@@ -276,6 +312,15 @@ def person_list(request):
     unnamed = [person for person in people if not person.is_named]
     named = [person for person in people if person.is_named]
 
+    # Unnamed cards show the face where it was actually seen — the stored
+    # reference may be a stale crop from an event that has been deleted.
+    for person in unnamed:
+        person.card_sighting_id = (
+            person.sightings.order_by("-event__detected_at")
+            .values_list("id", flat=True)
+            .first()
+        )
+
     return render(
         request,
         "devices/person_list.html",
@@ -290,11 +335,16 @@ def person_list(request):
 @login_required
 def person_detail(request, person_id):
     person = get_object_or_404(Person, pk=person_id)
+    primary = os.path.basename(person.reference_image.name or "")
     return render(
         request,
         "devices/person_detail.html",
         {
             "person": person,
+            "references": [
+                {"filename": name, "is_primary": name == primary}
+                for name in person_references(person)
+            ],
             "sightings": person.sightings.select_related("event", "event__camera")[:60],
             "sighting_total": person.sightings.count(),
         },
@@ -302,15 +352,59 @@ def person_detail(request, person_id):
 
 
 @login_required
+def person_add_reference(request, person_id):
+    """Upload an extra reference photo — more angles mean better matching."""
+    person = get_object_or_404(Person, pk=person_id)
+    if request.method != "POST":
+        return redirect("devices:person_detail", person_id=person.pk)
+
+    image_file = request.FILES.get("reference")
+    if not image_file:
+        messages.error(request, "Choose an image file first.")
+        return redirect("devices:person_detail", person_id=person.pk)
+
+    add_person_reference(person, image_file)
+    messages.success(request, "Reference photo added.")
+    return redirect("devices:person_detail", person_id=person.pk)
+
+
+@login_required
+def person_reference_image(request, person_id, filename):
+    """Serve one reference file from the person's directory."""
+    person = get_object_or_404(Person, pk=person_id)
+    if filename not in person_references(person):
+        return HttpResponse("No such reference", status=404, content_type="text/plain")
+    with open(db_path(PERSON_DB) / person.code / filename, "rb") as f:
+        return HttpResponse(f.read(), content_type="image/jpeg")
+
+
+@login_required
+def person_delete_reference(request, person_id, filename):
+    person = get_object_or_404(Person, pk=person_id)
+    if request.method != "POST":
+        return redirect("devices:person_detail", person_id=person.pk)
+
+    try:
+        delete_person_reference(person, filename)
+        messages.success(request, "Reference photo removed.")
+    except ValueError as exc:
+        messages.error(request, str(exc))
+    return redirect("devices:person_detail", person_id=person.pk)
+
+
+@login_required
 def person_image(request, person_id):
     person = get_object_or_404(Person, pk=person_id)
     if not person.reference_image:
         return HttpResponse("No reference image", status=404, content_type="text/plain")
-    person.reference_image.open("rb")
     try:
-        return HttpResponse(person.reference_image.read(), content_type="image/jpeg")
-    finally:
-        person.reference_image.close()
+        person.reference_image.open("rb")
+        try:
+            return HttpResponse(person.reference_image.read(), content_type="image/jpeg")
+        finally:
+            person.reference_image.close()
+    except OSError:
+        return HttpResponse("Reference file missing", status=404, content_type="text/plain")
 
 
 @login_required
@@ -336,6 +430,18 @@ def candidate_delete(request, candidate_id):
         "devices/confirm_delete.html",
         {"object": candidate, "type": "candidate", "list_url": "devices:people"},
     )
+
+
+@login_required
+def candidate_promote(request, candidate_id):
+    """Manually promote a candidate to a person, skipping the sighting threshold."""
+    candidate = get_object_or_404(FaceCandidate, pk=candidate_id)
+    if request.method != "POST":
+        return redirect("devices:people")
+
+    person = promote_candidate(candidate)
+    messages.success(request, "Candidate promoted — give this person a name.")
+    return redirect("devices:person_name", person_id=person.pk)
 
 
 @login_required
@@ -370,6 +476,22 @@ def person_name(request, person_id):
 
 
 @login_required
+def person_update(request, person_id):
+    """Save the inline edits on the person page: name and/or a reference photo."""
+    person = get_object_or_404(Person, pk=person_id)
+    if request.method == "POST":
+        name = (request.POST.get("name") or "").strip()
+        if name and name != person.name:
+            name_person(person, name)
+            messages.success(request, f"Renamed to '{person.display_name}'.")
+        reference = request.FILES.get("reference")
+        if reference:
+            add_person_reference(person, reference)
+            messages.success(request, "Reference photo added.")
+    return redirect("devices:person_detail", person_id=person.pk)
+
+
+@login_required
 def person_create(request):
     if request.method == "POST":
         form = PersonForm(request.POST, request.FILES)
@@ -396,6 +518,44 @@ def person_delete(request, person_id):
         "devices/confirm_delete.html",
         {"object": person, "type": "person", "list_url": "devices:people"},
     )
+
+
+def _back(request, fallback="devices:people"):
+    """Redirect to the page the action was taken from (local paths only)."""
+    target = request.POST.get("next", "")
+    if target.startswith("/devices/") or target.startswith("/notifications"):
+        return redirect(target)
+    return redirect(fallback)
+
+
+@login_required
+def sighting_approve(request, sighting_id):
+    """User confirmed this match is the person it claims."""
+    sighting = get_object_or_404(Sighting, pk=sighting_id)
+    if request.method == "POST":
+        approve_sighting(sighting)
+    return _back(request)
+
+
+@login_required
+def sighting_reject(request, sighting_id):
+    """Match was wrong — delete it and feed the face back to the candidates."""
+    sighting = get_object_or_404(Sighting, pk=sighting_id)
+    if request.method == "POST":
+        label = sighting.person.display_name
+        reject_sighting(sighting)
+        messages.info(request, f"Rejected the match to '{label}' — the face went back to candidates if usable.")
+    return _back(request)
+
+
+@login_required
+def sighting_face(request, sighting_id):
+    """JPEG crop of just the matched face, for judging the match."""
+    sighting = get_object_or_404(Sighting.objects.select_related("event"), pk=sighting_id)
+    crop = sighting_face_crop(sighting)
+    if not crop:
+        return HttpResponse("No face box", status=404, content_type="text/plain")
+    return HttpResponse(crop, content_type="image/jpeg")
 
 
 @login_required

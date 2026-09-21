@@ -70,7 +70,19 @@
         <p><strong>Recognized:</strong>
             {% if event.sightings.exists %}
             {% for sighting in event.sightings.all %}
-            <a href="{% url 'devices:person_detail' sighting.person_id %}">{{ sighting.person.display_name }}</a>{% if not forloop.last %}, {% endif %}
+            <a href="{% url 'devices:person_detail' sighting.person_id %}">{{ sighting.person.display_name }}</a>
+            {% if sighting.confirmed %}✓{% endif %}
+            <form method="post" action="{% url 'devices:sighting_approve' sighting.id %}" class="inline-form">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.path }}">
+                <button type="submit" class="btn btn-sm btn-ghost">Approve</button>
+            </form>
+            <form method="post" action="{% url 'devices:sighting_reject' sighting.id %}" class="inline-form">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.path }}">
+                <button type="submit" class="btn btn-sm btn-ghost">Reject</button>
+            </form>
+            {% if not forloop.last %}<br>{% endif %}
             {% endfor %}
             {% else %}—{% endif %}
         </p>

@@ -205,6 +205,17 @@ a:hover {
     border-color: var(--accent);
 }
 
+.form-group input::file-selector-button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    margin-right: 10px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
 .form-group input[type="checkbox"] {
     width: auto;
     margin-top: 6px;
@@ -239,6 +250,10 @@ a:hover {
     gap: 12px;
     align-items: center;
     margin-top: 20px;
+}
+
+.form-actions-end {
+    justify-content: flex-end;
 }
 
 /* Buttons */
@@ -364,6 +379,18 @@ a:hover {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
     gap: 20px;
+}
+
+/* Narrow first column — e.g. person detail: small reference card, wide sightings */
+.content-grid.grid-sidebar {
+    grid-template-columns: minmax(260px, 340px) 1fr;
+}
+
+.reference-photo {
+    max-height: 300px;
+    width: auto;
+    max-width: 100%;
+    object-fit: contain;
 }
 
 .panel {
@@ -493,6 +520,22 @@ a:hover {
 
 .inline-form {
     display: inline-block;
+}
+
+/* Stacked action buttons in table cells (approve/reject sightings) */
+.sighting-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 92px;
+}
+
+.sighting-actions .btn {
+    width: 100%;
+}
+
+.nowrap {
+    white-space: nowrap;
 }
 
 /* Notifications */
@@ -742,6 +785,10 @@ a:hover {
     .main-content {
         margin-left: 0;
         padding: 20px;
+    }
+
+    .content-grid.grid-sidebar {
+        grid-template-columns: 1fr;
     }
 }
 

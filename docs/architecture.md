@@ -934,14 +934,22 @@ classDiagram
 | `/devices/events/{id}/delete/` | `event_delete` | remove capture + stored frame |
 | `/devices/events/review-no-face/` | `event_review_no_face` | POST: confirm every no-face verdict |
 | `/devices/events/cleanup/` | `event_cleanup_now` | POST: run the purge immediately |
+| `/devices/events/bulk-delete/` | `event_bulk_delete` | POST: delete all ticked captures |
 | `/devices/people/` | `person_list` | face database: unnamed, named, candidates |
 | `/devices/people/add/` | `person_create` | manual enrolment |
 | `/devices/people/{id}/` | `person_detail` | reference + every sighting |
 | `/devices/people/{id}/image/` | `person_image` | reference image |
 | `/devices/people/{id}/name/` | `person_name` | name, or merge into another person |
+| `/devices/people/{id}/references/add/` | `person_add_reference` | POST: upload extra reference photo |
+| `/devices/people/{id}/references/{f}/image/` | `person_reference_image` | serve one stored reference |
+| `/devices/people/{id}/references/{f}/delete/` | `person_delete_reference` | POST: remove one reference (never the last) |
 | `/devices/people/{id}/delete/` | `person_delete` | remove identity + directory |
 | `/devices/candidates/{id}/image/` | `candidate_image` | pending candidate crop |
 | `/devices/candidates/{id}/delete/` | `candidate_delete` | remove candidate + directory |
+| `/devices/candidates/{id}/promote/` | `candidate_promote` | POST: skip the sighting threshold, become a person |
+| `/devices/sightings/{id}/approve/` | `sighting_approve` | POST: user confirms the match |
+| `/devices/sightings/{id}/reject/` | `sighting_reject` | POST: wrong match — face returns to candidates |
+| `/devices/sightings/{id}/face/` | `sighting_face` | JPEG crop of the matched face |
 | `/notifications/` | `notification_list` | unread by default, `?show=all` for everything |
 | `/notifications/{id}/open/` | `notification_open` | mark read then follow the link |
 | `/notifications/{id}/read/` | `notification_mark_read` | POST |

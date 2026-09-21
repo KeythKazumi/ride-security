@@ -24,7 +24,11 @@
         {% for person in unnamed %}
         <div class="face-card needs-name">
             <a href="{% url 'devices:person_name' person.id %}">
+                {% if person.card_sighting_id %}
+                <img src="{% url 'devices:sighting_face' person.card_sighting_id %}" alt="{{ person.display_name }}">
+                {% else %}
                 <img src="{% url 'devices:person_image' person.id %}" alt="{{ person.display_name }}">
+                {% endif %}
             </a>
             <div class="face-card-body">
                 <div class="face-card-name">{{ person.display_name }}</div>
@@ -99,7 +103,13 @@
                 <td>{{ candidate.sighting_count }} / {{ candidate.PROMOTE_AFTER_SIGHTINGS }}</td>
                 <td>{{ candidate.first_seen_at|date:"Y-m-d H:i" }}</td>
                 <td>{{ candidate.last_seen_at|date:"Y-m-d H:i" }}</td>
-                <td><a href="{% url 'devices:candidate_delete' candidate.id %}" class="btn btn-sm btn-ghost">Delete</a></td>
+                <td>
+                    <form method="post" action="{% url 'devices:candidate_promote' candidate.id %}" class="inline-form">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-primary">Promote</button>
+                    </form>
+                    <a href="{% url 'devices:candidate_delete' candidate.id %}" class="btn btn-sm btn-ghost">Delete</a>
+                </td>
             </tr>
             {% endfor %}
         </tbody>

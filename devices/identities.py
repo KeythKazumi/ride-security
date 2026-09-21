@@ -152,13 +152,19 @@ def observe_candidate(image_path, box, event):
     candidate = _find_candidate(crop)
 
     if candidate is None:
-        candidate = FaceCandidate(camera=event.camera, sighting_count=1)
+        candidate = FaceCandidate(
+            camera=event.camera,
+            sighting_count=1,
+            first_seen_at=event.detected_at,
+            last_seen_at=event.detected_at,
+        )
         candidate.image.save(f"{timezone.now():%Y%m%d-%H%M%S-%f}.jpg", ContentFile(crop), save=True)
         invalidate_db_cache(CANDIDATE_DB)
         logger.info("New face candidate %s from event %s", candidate.code, event.pk)
         return None
 
     candidate.sighting_count += 1
+    candidate.last_seen_at = event.detected_at
     candidate.save(update_fields=["sighting_count", "last_seen_at"])
 
     if not candidate.ready_to_promote:
@@ -167,7 +173,7 @@ def observe_candidate(image_path, box, event):
         )
         return None
 
-    return promote_candidate(candidate, crop)
+    return promote_candidate(candidate, crop, seen_at=event.detected_at)
 
 
 def _find_candidate(crop_bytes):
@@ -187,7 +193,7 @@ def _find_candidate(crop_bytes):
 
 
 @transaction.atomic
-def promote_candidate(candidate, crop_bytes=None):
+def promote_candidate(candidate, crop_bytes=None, seen_at=None):
     """Turn a candidate into an unnamed Person and notify the user."""
     if crop_bytes is None:
         candidate.image.open("rb")
@@ -196,7 +202,10 @@ def promote_candidate(candidate, crop_bytes=None):
         finally:
             candidate.image.close()
 
-    person = Person(auto_created=True, last_seen_at=timezone.now())
+    person = Person(
+        auto_created=True,
+        last_seen_at=seen_at or candidate.last_seen_at or timezone.now(),
+    )
     person.reference_image.save(
         f"{timezone.now():%Y%m%d-%H%M%S-%f}.jpg", ContentFile(crop_bytes), save=True
     )
@@ -283,6 +292,99 @@ def name_person(person, name):
         is_read=False,
     ).update(is_read=True, read_at=timezone.now())
     return person
+
+
+def approve_sighting(sighting):
+    """User confirmed the match is correct."""
+    sighting.confirmed = True
+    sighting.save(update_fields=["confirmed"])
+    return sighting
+
+
+def reject_sighting(sighting):
+    """Match was wrong: remove it and give the real face its own shot at identity.
+
+    The face may be genuine even when the match is not, so a usable crop goes
+    back through the candidate pipeline — a second sighting makes it a person.
+    The event's stored `recognized`/`faces` snapshot and the person's
+    `last_seen_at` are rebuilt from the sightings that remain.
+    """
+    event = sighting.event
+    person = sighting.person
+    box = sighting.box
+    sighting.delete()
+
+    if box:
+        event.image.open("rb")
+        try:
+            image_bytes = event.image.read()
+        finally:
+            event.image.close()
+        with _temp_jpeg(image_bytes) as image_path:
+            if face_quality(image_path, box)["usable"]:
+                observe_candidate(image_path, box, event)
+
+    for face in event.faces:
+        if face.get("code") == person.code:
+            face["code"] = None
+            face["name"] = "Unknown"
+            face["distance"] = None
+    event.recognized = sorted(
+        {s.person.display_name for s in event.sightings.select_related("person")}
+    )
+    event.save(update_fields=["faces", "recognized"])
+
+    person.last_seen_at = (
+        person.sightings.order_by("-event__detected_at")
+        .values_list("event__detected_at", flat=True)
+        .first()
+    )
+    person.save(update_fields=["last_seen_at"])
+
+
+def person_references(person):
+    """Filenames of every reference photo in persons/<code>/, newest first.
+
+    The directory itself is the DeepFace database — every file in it is an
+    active reference, so more angles means better matching.
+    """
+    directory = db_path(PERSON_DB, ensure=False) / person.code
+    if not directory.exists():
+        return []
+    return sorted((f.name for f in directory.iterdir() if f.is_file()), reverse=True)
+
+
+def add_person_reference(person, image_file):
+    """Store an uploaded photo under persons/<code>/ and make it the primary.
+
+    `reference_image.save` routes through `_person_upload_to`, so the file lands
+    in the person's directory and the field points at the newest upload. Older
+    files stay in the directory and keep working as extra references.
+    """
+    person.reference_image.save(image_file.name, image_file, save=True)
+    invalidate_db_cache(PERSON_DB)
+    return person
+
+
+def delete_person_reference(person, filename):
+    """Remove one reference photo. Refuses to remove the last one — a person
+    with no references can never match anything."""
+    directory = (db_path(PERSON_DB, ensure=False) / person.code).resolve()
+    target = (directory / filename).resolve()
+    if not str(target).startswith(str(directory) + os.sep) or not target.is_file():
+        raise ValueError("Not a reference of this person")
+
+    remaining = [name for name in person_references(person) if name != filename]
+    if not remaining:
+        raise ValueError("Cannot remove the last reference — delete the person instead")
+
+    target.unlink()
+    invalidate_db_cache(PERSON_DB)
+
+    # If the primary was deleted, point the field at the newest remaining file.
+    if person.reference_image.name.endswith(f"/{filename}"):
+        person.reference_image.name = f"persons/{person.code}/{remaining[0]}"
+        person.save(update_fields=["reference_image"])
 
 
 def delete_person(person):

@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from django.core.files.base import ContentFile
 from django.utils import timezone
 
-from .face_recognition import assess_capture, draw_recognized_faces
+from .face_recognition import assess_capture, crop_face, draw_recognized_faces
 from .identities import identify_faces, label_faces, register_sightings
 from .models import MotionEvent
 from .services import fetch_camera_snapshot
@@ -137,6 +137,14 @@ def annotate_event(event):
         return None
     with _as_temp_file(_event_bytes(event)) as image_path:
         return draw_recognized_faces(image_path, event.faces, persons=event.persons)
+
+
+def sighting_face_crop(sighting):
+    """JPEG crop of a sighting's face box — what the user judges a match by."""
+    if not sighting.box:
+        return None
+    with _as_temp_file(_event_bytes(sighting.event)) as image_path:
+        return crop_face(image_path, sighting.box, margin=0.5)
 
 
 def process_pending(limit=None):

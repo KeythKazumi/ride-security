@@ -60,9 +60,19 @@
     </div>
 
     {% if events %}
-    <table class="data-table">
+    <form method="post" action="{% url 'devices:event_bulk_delete' %}{% if request.GET.urlencode %}?{{ request.GET.urlencode }}{% endif %}">
+        {% csrf_token %}
+        <div style="margin: 0 0 10px;">
+            <button type="submit" class="btn btn-sm btn-danger"
+                    onclick="return confirm('Delete all selected captures? This cannot be undone.')">
+                Delete selected
+            </button>
+        </div>
+        <table class="data-table">
         <thead>
             <tr>
+                <th><input type="checkbox" title="Select all"
+                           onclick="document.querySelectorAll('.event-check').forEach(c => c.checked = this.checked)"></th>
                 <th>Frame</th>
                 <th>Camera</th>
                 <th>Detected</th>
@@ -72,11 +82,13 @@
                 <th>Sharpness</th>
                 <th>Verdict</th>
                 <th>Recognized</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
             {% for event in events %}
             <tr>
+                <td><input type="checkbox" name="event_ids" value="{{ event.id }}" class="event-check"></td>
                 <td>
                     <a href="{% url 'devices:event_detail' event.id %}">
                         <img src="{% url 'devices:event_image' event.id %}" alt="Capture {{ event.id }}" class="event-thumb">
@@ -105,10 +117,18 @@
                     {% if event.is_reviewed %}<br><small>confirmed ✓</small>{% endif %}
                 </td>
                 <td>{{ event.recognized_display }}</td>
+                <td>
+                    <button type="submit" class="btn btn-sm btn-ghost"
+                            formaction="{% url 'devices:event_delete' event.id %}"
+                            onclick="return confirm('Delete this capture?')">
+                        Delete
+                    </button>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
+    </form>
     {% else %}
     <p class="empty-state">
         No captures yet. Start the watcher with

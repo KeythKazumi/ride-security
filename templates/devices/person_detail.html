@@ -18,20 +18,51 @@
     </div>
 </header>
 
-<div class="content-grid">
+<div class="content-grid grid-sidebar">
     <section class="panel">
         <div class="panel-header">
             <h2>Reference</h2>
             {% if not person.is_named %}<span class="badge badge-low_battery">Unnamed</span>{% endif %}
         </div>
         <div class="camera-feed">
-            <img src="{% url 'devices:person_image' person.id %}" alt="{{ person.display_name }}" class="camera-snapshot">
+            {% if person.reference_image %}
+            <img src="{% url 'devices:person_image' person.id %}" alt="{{ person.display_name }}" class="camera-snapshot reference-photo">
+            {% else %}
+            <p class="empty-state">No reference photo — add one below or this person can never match.</p>
+            {% endif %}
         </div>
         <div class="feed-meta">
             <p><strong>Identity code:</strong> <code>{{ person.code }}</code></p>
             <p><strong>First added:</strong> {{ person.created_at|date:"Y-m-d H:i" }}</p>
             <p><strong>Last seen:</strong> {{ person.last_seen_at|date:"Y-m-d H:i"|default:"—" }}</p>
+            <p><strong>Reference photos:</strong> {{ references|length }} — every photo is an active match reference</p>
         </div>
+        <div class="form-group">
+            <label for="person-name">Name</label>
+            <input form="person-edit" id="person-name" type="text" name="name"
+                   value="{{ person.name }}" placeholder="Name this person">
+        </div>
+        <div class="form-group" style="margin-top: 12px;">
+            <label for="person-reference">Add reference photo</label>
+            <input form="person-edit" id="person-reference" type="file" name="reference" accept="image/*">
+        </div>
+        {% if references|length > 1 %}
+        <div class="face-grid">
+            {% for ref in references %}
+            <div class="face-card">
+                <img src="{% url 'devices:person_reference_image' person.id ref.filename %}" alt="Reference">
+                <div class="face-card-body">
+                    {% if ref.is_primary %}<span class="badge badge-usable">Shown on cards</span>{% endif %}
+                    <form method="post" action="{% url 'devices:person_delete_reference' person.id ref.filename %}" class="inline-form">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-ghost"
+                                onclick="return confirm('Remove this reference photo?')">Remove</button>
+                    </form>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
     </section>
 
     <section class="panel">
@@ -39,13 +70,17 @@
             <h2>Sightings</h2>
         </div>
         {% if sightings %}
+        <p class="page-subtitle">Check each match: approve keeps it as evidence, reject removes it and sends the
+            face back to candidates so it can become its own person.</p>
         <table class="data-table">
             <thead>
                 <tr>
-                    <th>Frame</th>
+                    <th>Matched face</th>
                     <th>Camera</th>
                     <th>When</th>
                     <th>Distance</th>
+                    <th>Verdict</th>
+                    <th></th>
                 </tr>
             </thead>
             <tbody>
@@ -53,15 +88,38 @@
                 <tr>
                     <td>
                         <a href="{% url 'devices:event_detail' sighting.event_id %}">
-                            <img src="{% url 'devices:event_image' sighting.event_id %}" alt="Capture" class="event-thumb">
+                            <img src="{% url 'devices:sighting_face' sighting.id %}" alt="Matched face" class="face-thumb">
                         </a>
                     </td>
                     <td>{{ sighting.event.camera.name }}</td>
-                    <td>
+                    <td class="nowrap">
                         {{ sighting.event.detected_at|date:"Y-m-d H:i:s" }}
                         {% if sighting.is_enrollment %}<br><span class="badge badge-offline">Enrollment</span>{% endif %}
                     </td>
                     <td>{% if sighting.distance %}{{ sighting.distance|floatformat:4 }}{% else %}—{% endif %}</td>
+                    <td>
+                        {% if sighting.confirmed %}<span class="badge badge-usable">Approved</span>
+                        {% else %}<span class="badge badge-offline">Unreviewed</span>{% endif %}
+                    </td>
+                    <td>
+                        <div class="sighting-actions">
+                            {% if not sighting.confirmed %}
+                            <form method="post" action="{% url 'devices:sighting_approve' sighting.id %}" class="inline-form">
+                                {% csrf_token %}
+                                <input type="hidden" name="next" value="{{ request.path }}">
+                                <button type="submit" class="btn btn-sm btn-ghost">Approve</button>
+                            </form>
+                            {% endif %}
+                            <form method="post" action="{% url 'devices:sighting_reject' sighting.id %}" class="inline-form">
+                                {% csrf_token %}
+                                <input type="hidden" name="next" value="{{ request.path }}">
+                                <button type="submit" class="btn btn-sm btn-ghost"
+                                        onclick="return confirm('Reject this match? The sighting is removed and the face goes back to candidates.')">
+                                    Reject
+                                </button>
+                            </form>
+                        </div>
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -70,5 +128,13 @@
         <p class="empty-state">No sightings recorded yet.</p>
         {% endif %}
     </section>
+</div>
+
+<form id="person-edit" method="post" action="{% url 'devices:person_update' person.id %}"
+      enctype="multipart/form-data">
+    {% csrf_token %}
+</form>
+<div class="form-actions form-actions-end">
+    <button type="submit" form="person-edit" class="btn btn-primary">Save changes</button>
 </div>
 {% endblock %}

@@ -250,8 +250,10 @@ class FaceCandidate(models.Model):
         related_name="face_candidates",
     )
     sighting_count = models.PositiveIntegerField(default=1)
-    first_seen_at = models.DateTimeField(auto_now_add=True)
-    last_seen_at = models.DateTimeField(auto_now=True)
+    # Both are the event's detection time, not wall-clock save time — a backlog
+    # re-analysis must not make an old face look like it was seen today.
+    first_seen_at = models.DateTimeField()
+    last_seen_at = models.DateTimeField()
 
     class Meta:
         ordering = ["-last_seen_at"]
@@ -274,6 +276,11 @@ class Sighting(models.Model):
     is_enrollment = models.BooleanField(
         default=False,
         help_text="This capture is the one that created the person.",
+    )
+    confirmed = models.BooleanField(
+        null=True,
+        blank=True,
+        help_text="User verdict on the match. Null = unreviewed, True = approved.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
