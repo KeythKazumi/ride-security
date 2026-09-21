@@ -4,15 +4,30 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # A face smaller than this on its shortest side carries too few pixels for SFace
-# to embed reliably. 80px is a common floor for recognition (as opposed to mere
-# detection, which works far smaller).
-MIN_FACE_PX = 80
+# to embed reliably. 80px is the textbook floor, but on these cameras a person
+# on the pavement is ~45px and still clearly a face once MTCNN has verified it.
+# Matching gets noisier below 80px — which is why naming and merging are the
+# same form — but a dropped face can never be recognised at all.
+MIN_FACE_PX = 40
 # Laplacian variance of the face crop below which the face is motion-blurred or
 # out of focus. Heuristic — calibrate against your own captures.
 MIN_FACE_SHARPNESS = 40.0
 # DeepFace returns the whole frame as a pseudo-face when enforce_detection is
 # off and nothing is found; anything at or below this confidence is discarded.
 MIN_DETECTION_CONFIDENCE = 0.01
+# A real face on a security camera never fills most of the frame. Anything
+# wider or taller than this share of the frame is the whole-frame fallback (or
+# a detector hallucination) and must never be enrolled: a frame embedding sits
+# at a middling distance from every face and swallows all unmatched sightings.
+MAX_FACE_FRAME_RATIO = 0.5
+# Before a crop is enrolled it is re-detected on its own with MTCNN, which
+# unlike the Haar cascade reports a real probability. The cascade happily fires
+# on floor tiles and window frames; MTCNN does not.
+VERIFY_DETECTOR = "mtcnn"
+MIN_VERIFY_CONFIDENCE = 0.9
+# Share of a face box that must lie inside a detected person box for the face
+# to count as belonging to a human rather than to the floor.
+MIN_FACE_IN_PERSON = 0.8
 # Detector fallback order: opencv's Haar cascade is fast but misses profiles and
 # hard hats, so a miss falls through to MTCNN before giving up on the frame.
 FACE_DETECTORS = ("opencv", "mtcnn")
@@ -24,7 +39,7 @@ CANDIDATE_DB = "candidates"
 # MobileNet-SSD person detector (VOC class 15). Model files live with the other
 # cached weights and are fetched on first use, like DeepFace's own models.
 SSD_PERSON_CLASS = 15
-SSD_MIN_CONFIDENCE = 0.15
+SSD_MIN_CONFIDENCE = 0.45
 PERSON_MODEL_FILES = ("MobileNetSSD_deploy.prototxt", "MobileNetSSD_deploy.caffemodel")
 PERSON_MODEL_URL = (
     "https://github.com/PINTO0309/MobileNet-SSD-RealSense/raw/master/"
@@ -60,6 +75,89 @@ def invalidate_db_cache(name=PERSON_DB):
             logger.warning("Could not remove %s: %s", pickle_file, exc)
 
 
+def is_plausible_face_box(box, frame_w, frame_h):
+    """False for empty boxes and for boxes that are really the frame itself."""
+    _, _, w, h = box
+    if w <= 0 or h <= 0:
+        return False
+    return w < frame_w * MAX_FACE_FRAME_RATIO and h < frame_h * MAX_FACE_FRAME_RATIO
+
+
+def box_iou(a, b):
+    """Intersection over union of two (x, y, w, h) boxes."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+    iy = max(0, min(ay + ah, by + bh) - max(ay, by))
+    inter = ix * iy
+    union = aw * ah + bw * bh - inter
+    return inter / union if union else 0.0
+
+
+def box_containment(inner, outer):
+    """Fraction of `inner`'s area that lies inside `outer`."""
+    ix, iy, iw, ih = inner
+    ox, oy, ow, oh = outer
+    if iw <= 0 or ih <= 0:
+        return 0.0
+    w = max(0, min(ix + iw, ox + ow) - max(ix, ox))
+    h = max(0, min(iy + ih, oy + oh) - max(iy, oy))
+    return (w * h) / (iw * ih)
+
+
+def face_belongs_to_person(face_box, person_boxes, min_fraction=MIN_FACE_IN_PERSON):
+    """True when the face box sits inside one of the detected person boxes."""
+    return any(box_containment(face_box, p) >= min_fraction for p in person_boxes)
+
+
+def _crop_region(image, box, margin):
+    """Slice `box` (with margin) out of a decoded frame, clamped to its edges."""
+    x, y, w, h = box
+    pad_x, pad_y = int(w * margin), int(h * margin)
+    frame_h, frame_w = image.shape[:2]
+    x0, y0 = max(x - pad_x, 0), max(y - pad_y, 0)
+    x1, y1 = min(x + w + pad_x, frame_w), min(y + h + pad_y, frame_h)
+    return image[y0:y1, x0:x1]
+
+
+def verify_face_crop(crop):
+    """Second opinion on a face crop with a probabilistic detector.
+
+    `crop` is JPEG bytes, a path, or an already-decoded frame. Returns the best
+    confidence found (0.0 if none). Callers gate on `MIN_VERIFY_CONFIDENCE`.
+    """
+    import numpy as np
+    from deepface import DeepFace
+
+    image = crop if isinstance(crop, np.ndarray) else _load_image(crop)
+    if image is None or image.size == 0:
+        return 0.0
+    try:
+        detections = DeepFace.extract_faces(
+            img_path=image,
+            detector_backend=VERIFY_DETECTOR,
+            enforce_detection=False,
+            align=False,
+        )
+    except Exception as exc:
+        logger.warning("Face verification failed (%s): %s", VERIFY_DETECTOR, exc)
+        return 0.0
+
+    frame_h, frame_w = image.shape[:2]
+    best = 0.0
+    for detection in detections:
+        area = detection.get("facial_area") or {}
+        w, h = int(area.get("w", 0)), int(area.get("h", 0))
+        # The crop *is* the face with a margin, so here a box filling the
+        # whole crop is legitimate; only the no-face fallback (w == frame and
+        # h == frame with ~0 confidence) must be discarded.
+        confidence = float(detection.get("confidence", 0) or 0)
+        if w <= 0 or h <= 0 or (w >= frame_w and h >= frame_h and confidence <= MIN_DETECTION_CONFIDENCE):
+            continue
+        best = max(best, confidence)
+    return best
+
+
 def _load_image(path_or_bytes):
     import cv2
     import numpy as np
@@ -73,7 +171,7 @@ def _load_image(path_or_bytes):
     return image
 
 
-def search_faces(image_path, db_name=PERSON_DB):
+def search_faces(image_path, db_name=PERSON_DB, is_crop=False):
     """Match every face in an image against a face database.
 
     Returns a list of dicts: {"code", "matched", "distance", "threshold",
@@ -95,14 +193,19 @@ def search_faces(image_path, db_name=PERSON_DB):
     frame_h, frame_w = image.shape[:2]
 
     for backend in FACE_DETECTORS:
-        faces = _search_with(image_path, path, backend, frame_w, frame_h)
+        faces = _search_with(image_path, path, backend, frame_w, frame_h, is_crop)
         if faces or backend == FACE_DETECTORS[-1]:
             return faces
     return []
 
 
-def _search_with(image_path, path, backend, frame_w, frame_h):
-    """One DeepFace.find pass with a given detector backend."""
+def _search_with(image_path, path, backend, frame_w, frame_h, is_crop=False):
+    """One DeepFace.find pass with a given detector backend.
+
+    `is_crop` means the image is already a verified face crop, where the face
+    legitimately fills most of the frame, so the whole-frame guard is relaxed
+    to rejecting only the exact-frame fallback box.
+    """
     import pandas as pd
     from deepface import DeepFace
 
@@ -130,8 +233,12 @@ def _search_with(image_path, path, backend, frame_w, frame_h):
             continue
         row = df.iloc[0]
         w, h = int(row.get("source_w", 0)), int(row.get("source_h", 0))
+        box = (int(row.get("source_x", 0)), int(row.get("source_y", 0)), w, h)
         # The whole-frame fallback box is not a face — and must never match.
-        if w >= frame_w and h >= frame_h:
+        if is_crop:
+            if w <= 0 or h <= 0 or (w >= frame_w and h >= frame_h):
+                continue
+        elif not is_plausible_face_box(box, frame_w, frame_h):
             continue
         identity = row.get("identity", "")
         distance = float(row.get("distance", 1.0))
@@ -144,12 +251,7 @@ def _search_with(image_path, path, backend, frame_w, frame_h):
                 "matched": matched,
                 "distance": distance,
                 "threshold": threshold,
-                "box": (
-                    int(row.get("source_x", 0)),
-                    int(row.get("source_y", 0)),
-                    w,
-                    h,
-                ),
+                "box": box,
             }
         )
     return faces
@@ -162,6 +264,11 @@ def detect_faces(image_path):
     detection is kept separate: it answers "is there a face here at all, and is
     it big and sharp enough to recognise later?".
 
+    Every hit is re-detected on its own crop with `VERIFY_DETECTOR`. The Haar
+    cascade is fast but fires on floor tiles, chair legs and window frames, and
+    a frame full of those would otherwise be labelled "usable" with "Unknown"
+    faces drawn on furniture. `confidence` in the result is the verifier's.
+
     Returns a list of dicts: {"box": (x, y, w, h), "confidence": float,
     "sharpness": float}.
     """
@@ -171,9 +278,22 @@ def detect_faces(image_path):
 
     for backend in FACE_DETECTORS:
         faces = _detect_with(image, backend)
+        if backend != VERIFY_DETECTOR:
+            faces = _verified(image, faces)
         if faces:
             return faces
     return []
+
+
+def _verified(image, faces):
+    kept = []
+    for face in faces:
+        confidence = verify_face_crop(_crop_region(image, face["box"], margin=0.5))
+        if confidence >= MIN_VERIFY_CONFIDENCE:
+            kept.append({**face, "confidence": confidence})
+        else:
+            logger.info("Dropping face %s: verification confidence %.2f", face["box"], confidence)
+    return kept
 
 
 def _detect_with(image, backend):
@@ -199,10 +319,10 @@ def _detect_with(image, backend):
         x, y = int(area.get("x", 0)), int(area.get("y", 0))
         w, h = int(area.get("w", 0)), int(area.get("h", 0))
 
-        if confidence <= MIN_DETECTION_CONFIDENCE or w <= 0 or h <= 0:
+        if confidence <= MIN_DETECTION_CONFIDENCE:
             continue
         # The whole-frame fallback box is not a face.
-        if w >= frame_w and h >= frame_h:
+        if not is_plausible_face_box((x, y, w, h), frame_w, frame_h):
             continue
 
         crop = image[max(y, 0):y + h, max(x, 0):x + w]
@@ -251,10 +371,11 @@ def detect_persons(image_path):
     """Best-effort pedestrian detection for frames where no usable face exists.
 
     A person with their back turned or a face under the pixel floor still
-    matters for review — the capture is evidence a human triggered it. Two
-    weak-but-free detectors are unioned: MobileNet-SSD's person class at a
-    608px input, and OpenCV's HOG people detector on a 1.5x upscale for
-    distant figures. Overlapping hits are merged with NMS.
+    matters for review — the capture is evidence a human triggered it.
+    MobileNet-SSD's person class at a 608px input, overlapping hits merged
+    with NMS. OpenCV's HOG detector used to be unioned in for distant figures,
+    but on these cameras it scored curtains and chair backs higher than actual
+    people, so it was dropped.
 
     Returns a list of (x, y, w, h) boxes.
     """
@@ -286,18 +407,6 @@ def detect_persons(image_path):
                 [max(int(x1), 0), max(int(y1), 0), min(int(x2 - x1), frame_w), min(int(y2 - y1), frame_h)]
             )
             scores.append(confidence)
-
-    # HOG on a 1.5x upscale catches distant upright figures the SSD misses.
-    hog = cv2.HOGDescriptor()
-    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-    big = cv2.resize(image, None, fx=1.5, fy=1.5)
-    rects, weights = hog.detectMultiScale(big, winStride=(8, 8), padding=(8, 8), scale=1.05)
-    for rect, weight in zip(rects, weights):
-        if weight <= 0.3:
-            continue
-        x, y, w, h = (int(v / 1.5) for v in rect)
-        boxes.append([x, y, w, h])
-        scores.append(float(min(weight, 1.0)))
 
     if not boxes:
         return []
@@ -351,13 +460,18 @@ def face_quality(image_path, box):
         return {"width": 0, "height": 0, "sharpness": 0.0, "usable": False}
 
     x, y, w, h = box
+    frame_h, frame_w = image.shape[:2]
     crop = image[max(y, 0):y + h, max(x, 0):x + w]
     sharp = _sharpness(crop)
     return {
         "width": w,
         "height": h,
         "sharpness": sharp,
-        "usable": min(w, h) >= MIN_FACE_PX and sharp >= MIN_FACE_SHARPNESS,
+        "usable": (
+            is_plausible_face_box(box, frame_w, frame_h)
+            and min(w, h) >= MIN_FACE_PX
+            and sharp >= MIN_FACE_SHARPNESS
+        ),
     }
 
 

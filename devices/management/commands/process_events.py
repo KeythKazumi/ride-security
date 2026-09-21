@@ -41,8 +41,24 @@ class Command(BaseCommand):
             dest="cameras",
             help="Restrict to these camera IDs. Repeatable.",
         )
+        parser.add_argument(
+            "--purge-bad-references",
+            action="store_true",
+            help=(
+                "Delete auto-created people and candidates whose reference image contains "
+                "no face (e.g. a whole frame enrolled by mistake). Combine with --reanalyze."
+            ),
+        )
 
     def handle(self, *args, **options):
+        if options["purge_bad_references"]:
+            from devices.identities import purge_bad_references
+
+            persons, candidates = purge_bad_references()
+            self.stdout.write(
+                self.style.WARNING(f"Purged {persons} person(s) and {candidates} candidate(s).")
+            )
+
         if options["reanalyze"]:
             self._reanalyze(options["limit"], options["cameras"])
             return

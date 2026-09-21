@@ -30,10 +30,18 @@ class Command(BaseCommand):
             action="store_true",
             help="Report what would be deleted without deleting anything.",
         )
+        parser.add_argument(
+            "--all-empty",
+            action="store_true",
+            help=(
+                "Also delete empty captures nobody has reviewed yet: analyzed, no face, "
+                "no person detected. One-off purge; not for --loop."
+            ),
+        )
 
     def handle(self, *args, **options):
         if not options["loop"]:
-            self._run(options["dry_run"])
+            self._run(options["dry_run"], options["all_empty"])
             return
 
         self.stdout.write(
@@ -42,23 +50,24 @@ class Command(BaseCommand):
         )
         try:
             while True:
-                self._run(options["dry_run"])
+                self._run(options["dry_run"], all_empty=False)
                 time.sleep(options["interval"])
         except KeyboardInterrupt:
             self.stdout.write("\nStopped.")
 
-    def _run(self, dry_run):
+    def _run(self, dry_run, all_empty):
+        queryset = cleanup_candidates(require_review=not all_empty)
+        label = "empty" if all_empty else "confirmed no-face"
         if dry_run:
-            count = cleanup_candidates().count()
-            self.stdout.write(f"{count} confirmed no-face event(s) would be removed.")
+            self.stdout.write(f"{queryset.count()} {label} event(s) would be removed.")
             return
 
-        removed, freed = cleanup_reviewed_events()
+        removed, freed = cleanup_reviewed_events(queryset)
         if removed:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Removed {removed} confirmed no-face event(s), freed {freed / 1024:.0f} KB."
+                    f"Removed {removed} {label} event(s), freed {freed / 1024:.0f} KB."
                 )
             )
         else:
-            self.stdout.write("Nothing confirmed for cleanup.")
+            self.stdout.write(f"Nothing {label} to clean up.")

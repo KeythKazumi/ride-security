@@ -26,16 +26,25 @@ from notifications.models import Notification
 
 from .face_recognition import (
     CANDIDATE_DB,
+    MIN_VERIFY_CONFIDENCE,
     PERSON_DB,
+    box_iou,
     crop_face,
     db_path,
+    face_belongs_to_person,
     face_quality,
     invalidate_db_cache,
     search_faces,
+    verify_face_crop,
 )
 from .models import FaceCandidate, Person, Sighting
 
 logger = logging.getLogger(__name__)
+
+# Overlap needed to say a DeepFace match box and a detector box are the same
+# face. The two detectors box slightly differently, so this is deliberately
+# loose; two distinct faces in a frame overlap far less than this.
+MATCH_IOU = 0.3
 
 
 @contextmanager
@@ -64,21 +73,38 @@ def label_faces(faces):
     return faces
 
 
+def _unmatched(box):
+    return {"code": None, "matched": False, "distance": None, "threshold": None, "box": box}
+
+
 def identify_faces(image_path, detected_boxes):
     """Match faces in a capture against enrolled people.
 
-    Falls back to the detector's boxes when nothing is enrolled yet, so the
-    bootstrap case (empty database) still yields candidates to enrol.
+    Every detected face comes back exactly once. DeepFace only reports faces
+    that landed under the distance threshold — a face nobody in the database
+    resembles is simply absent from its output — so the detector's boxes are
+    the source of truth and matches are attached to them by overlap. Faces with
+    no match stay unmatched and go on to the candidate pipeline instead of
+    being dropped because a *different* face in the frame was recognised.
     """
-    if Person.objects.exists():
-        matches = search_faces(image_path, PERSON_DB)
-        if matches:
-            return matches
+    matches = search_faces(image_path, PERSON_DB) if Person.objects.exists() else []
 
-    return [
-        {"code": None, "matched": False, "distance": None, "threshold": None, "box": box}
-        for box in detected_boxes
-    ]
+    results = []
+    claimed = set()
+    for box in detected_boxes:
+        best, best_iou = None, 0.0
+        for index, match in enumerate(matches):
+            if index in claimed or not match.get("matched"):
+                continue
+            iou = box_iou(box, match["box"])
+            if iou > best_iou:
+                best, best_iou = index, iou
+        if best is not None and best_iou >= MATCH_IOU:
+            claimed.add(best)
+            results.append({**matches[best], "box": tuple(box)})
+        else:
+            results.append(_unmatched(tuple(box)))
+    return results
 
 
 def register_sightings(event, matches, image_path):
@@ -114,7 +140,16 @@ def register_sightings(event, matches, image_path):
                 Person.objects.filter(pk=person.pk).update(last_seen_at=event.detected_at)
                 continue
 
-        # Unmatched: only good-quality faces are worth remembering.
+        # Unmatched: only good-quality faces on an actual person are worth
+        # remembering. The Haar cascade fires on floor tiles and window frames;
+        # a real face sits on top of a detected human shape.
+        if not face_belongs_to_person(match["box"], event.persons or []):
+            logger.info(
+                "Skipping unmatched face on event %s: box %s is not on a detected person",
+                event.pk,
+                box,
+            )
+            continue
         quality = face_quality(image_path, match["box"])
         if not quality["usable"]:
             logger.info(
@@ -147,6 +182,16 @@ def observe_candidate(image_path, box, event):
     """Track an unmatched face. Returns a Person if this sighting promoted it."""
     crop = crop_face(image_path, box)
     if not crop:
+        return None
+
+    confidence = verify_face_crop(crop)
+    if confidence < MIN_VERIFY_CONFIDENCE:
+        logger.info(
+            "Skipping face on event %s: verification confidence %.2f < %.2f",
+            event.pk,
+            confidence,
+            MIN_VERIFY_CONFIDENCE,
+        )
         return None
 
     candidate = _find_candidate(crop)
@@ -182,7 +227,7 @@ def _find_candidate(crop_bytes):
         return None
 
     with _temp_jpeg(crop_bytes) as crop_path:
-        matches = search_faces(crop_path, CANDIDATE_DB)
+        matches = search_faces(crop_path, CANDIDATE_DB, is_crop=True)
 
     for match in matches:
         if match.get("matched") and match.get("code"):
@@ -321,7 +366,10 @@ def reject_sighting(sighting):
         finally:
             event.image.close()
         with _temp_jpeg(image_bytes) as image_path:
-            if face_quality(image_path, box)["usable"]:
+            if (
+                face_belongs_to_person(box, event.persons or [])
+                and face_quality(image_path, box)["usable"]
+            ):
                 observe_candidate(image_path, box, event)
 
     for face in event.faces:
@@ -394,6 +442,38 @@ def delete_person(person):
     person.delete()
     _remove_identity_dir(PERSON_DB, code)
     invalidate_db_cache(PERSON_DB)
+
+
+def purge_bad_references():
+    """Delete auto-created people and candidates whose image is not a face crop.
+
+    Before the whole-frame guard and MTCNN verification existed, a frame-sized
+    "face" or a patch of floor tile could be enrolled. Such a reference matches
+    everything loosely and hijacks every unmatched sighting, so it has to go.
+    Only auto-created rows are touched — a hand-uploaded reference is the
+    operator's call. Returns (persons_removed, candidates_removed).
+    """
+    def has_face(field):
+        try:
+            field.open("rb")
+            try:
+                return verify_face_crop(field.read()) >= MIN_VERIFY_CONFIDENCE
+            finally:
+                field.close()
+        except (OSError, ValueError):
+            return False
+
+    persons = [p for p in Person.objects.filter(auto_created=True) if not has_face(p.reference_image)]
+    for person in persons:
+        logger.warning("Purging person %s: reference is not a face", person.code)
+        delete_person(person)
+
+    candidates = [c for c in FaceCandidate.objects.all() if not has_face(c.image)]
+    for candidate in candidates:
+        logger.warning("Purging candidate %s: image is not a face", candidate.code)
+        delete_candidate(candidate)
+
+    return len(persons), len(candidates)
 
 
 def delete_candidate(candidate):

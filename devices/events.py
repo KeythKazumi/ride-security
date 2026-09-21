@@ -173,13 +173,21 @@ def delete_event(event):
     return freed
 
 
-def cleanup_candidates():
-    """Analyzed no-face events a user has confirmed — safe to purge."""
-    return MotionEvent.objects.filter(
+def cleanup_candidates(require_review=True):
+    """Analyzed events with neither a face nor a person in them.
+
+    By default only those a user has confirmed are returned, so the periodic
+    cleaner never deletes on an unverified verdict. `require_review=False`
+    returns every empty capture, for a one-off purge of accumulated noise.
+    """
+    queryset = MotionEvent.objects.filter(
         status=MotionEvent.Status.ANALYZED,
         quality=MotionEvent.Quality.NO_FACE,
-        reviewed_at__isnull=False,
-    )
+        face_count=0,
+    ).filter(persons__in=([], None))
+    if require_review:
+        queryset = queryset.filter(reviewed_at__isnull=False)
+    return queryset
 
 
 def cleanup_reviewed_events(queryset=None):
