@@ -13,17 +13,26 @@ picks the rows up afterwards.
 import logging
 import os
 import tempfile
+import uuid
 from contextlib import contextmanager
 
 from django.core.files.base import ContentFile
 from django.utils import timezone
 
-from .face_recognition import assess_capture, crop_face, draw_recognized_faces
+from .face_recognition import assess_capture, crop_face, detect_persons, draw_recognized_faces
 from .identities import identify_faces, label_faces, register_sightings
 from .models import MotionEvent
 from .services import fetch_camera_snapshot
 
 logger = logging.getLogger(__name__)
+
+# Frames kept per motion episode. The rest are discarded: they are the same
+# person a step earlier or later, and storage is the scarce resource.
+DEFAULT_KEEP_FRAMES = 5
+# Weight of "how close is the person" versus "how sharp is the frame" when
+# ranking an episode's frames. Distance dominates: a slightly soft face at
+# 100px beats a razor-sharp one at 20px every time.
+CLOSENESS_WEIGHT = 0.7
 
 
 @contextmanager
@@ -49,12 +58,17 @@ def _event_bytes(event):
         event.image.close()
 
 
-def record_motion_event(camera, source, image_bytes=None, motion_score=None):
+def record_motion_event(camera, source, image_bytes=None, motion_score=None, require_person=None):
     """Persist a captured frame as a pending MotionEvent.
 
     If `image_bytes` is None the frame is pulled from the camera now, which is
     what the manual "capture" button and event-driven transports without an
     attached image do. Returns None when no image could be obtained.
+
+    Automatic sources only keep frames with a person in them: motion alone is
+    a cat, a car or the sun moving, and those captures were most of the table.
+    A manual capture is the operator asking for *this* frame, so it is always
+    kept. The person boxes found here are stored so analysis can reuse them.
     """
     if image_bytes is None:
         image_bytes = fetch_camera_snapshot(camera)
@@ -62,10 +76,103 @@ def record_motion_event(camera, source, image_bytes=None, motion_score=None):
         logger.warning("No image available for camera %s; dropping event", camera.id)
         return None
 
-    event = MotionEvent(camera=camera, source=source, motion_score=motion_score)
-    filename = f"{timezone.now():%Y%m%d-%H%M%S-%f}.jpg"
+    if require_person is None:
+        require_person = source != MotionEvent.Source.MANUAL
+
+    persons = detect_persons(image_bytes)
+    if require_person and not persons:
+        logger.info("No person in %s capture from camera %s; dropping", source, camera.id)
+        return None
+
+    return _save_event(camera, source, image_bytes, persons, motion_score=motion_score)
+
+
+def _save_event(camera, source, image_bytes, persons, motion_score=None, detected_at=None, sequence="", rank=0):
+    event = MotionEvent(
+        camera=camera,
+        source=source,
+        motion_score=motion_score,
+        persons=persons,
+        sequence=sequence,
+        rank=rank,
+    )
+    if detected_at:
+        event.detected_at = detected_at
+    filename = f"{event.detected_at:%Y%m%d-%H%M%S-%f}.jpg"
     event.image.save(filename, ContentFile(image_bytes), save=True)
     return event
+
+
+def _person_height_ratio(persons, frame_h):
+    """Largest person box height as a fraction of the frame — a proxy for distance."""
+    if not persons or not frame_h:
+        return 0.0
+    return max(box[3] for box in persons) / frame_h
+
+
+def record_motion_episode(camera, episode, keep=DEFAULT_KEEP_FRAMES):
+    """Store the most useful frames of a motion episode as one sequence.
+
+    Every frame is run through the person detector; frames without a person
+    are dropped outright. The rest are ranked by how large the person is (they
+    are closer, so the face has more pixels) and how sharp the frame is, and
+    the top `keep` are saved with `rank` 0 as the best. The processor analyses
+    a sequence best-first, so recognition gets the good shot even when the
+    first frame of the episode was a speck at the far end of the street.
+
+    Returns the saved events, best first.
+    """
+    from .face_recognition import _load_image
+
+    scored = []
+    for frame in episode.frames:
+        persons = detect_persons(frame.jpeg)
+        if not persons:
+            continue
+        image = _load_image(frame.jpeg)
+        frame_h = image.shape[0] if image is not None else 0
+        scored.append((frame, persons, _person_height_ratio(persons, frame_h)))
+
+    if not scored:
+        logger.info(
+            "Episode on camera %s: %s frame(s), no person in any; dropping",
+            camera.id,
+            len(episode.frames),
+        )
+        return []
+
+    max_sharp = max(frame.sharpness for frame, _, _ in scored) or 1.0
+    max_close = max(close for _, _, close in scored) or 1.0
+
+    def rank_key(item):
+        frame, _, close = item
+        return CLOSENESS_WEIGHT * (close / max_close) + (1 - CLOSENESS_WEIGHT) * (frame.sharpness / max_sharp)
+
+    scored.sort(key=rank_key, reverse=True)
+    sequence = uuid.uuid4().hex
+
+    events = [
+        _save_event(
+            camera,
+            MotionEvent.Source.FRAME_DIFF,
+            frame.jpeg,
+            persons,
+            motion_score=frame.motion_score,
+            detected_at=frame.captured_at,
+            sequence=sequence,
+            rank=rank,
+        )
+        for rank, (frame, persons, _) in enumerate(scored[:keep] if keep else scored)
+    ]
+    logger.info(
+        "Episode on camera %s: kept %s of %s frame(s) (%s with a person) as sequence %s",
+        camera.id,
+        len(events),
+        len(episode.frames),
+        len(scored),
+        sequence[:8],
+    )
+    return events
 
 
 def analyze_event(event):
@@ -155,7 +262,16 @@ def process_pending(limit=None):
     if limit:
         queryset = queryset[:limit]
 
-    return [analyze_event(event) for event in queryset]
+    # Oldest sequence first, best shot within it first. Sequence ids are
+    # random, so "oldest" is decided by when a sequence first shows up in
+    # chronological order; a stable sort then pulls rank 0 to the front.
+    events = list(queryset)
+    first_seen = {}
+    for index, event in enumerate(events):
+        first_seen.setdefault(event.sequence or event.pk, index)
+    events.sort(key=lambda e: (first_seen[e.sequence or e.pk], e.rank))
+
+    return [analyze_event(event) for event in events]
 
 
 def delete_event(event):

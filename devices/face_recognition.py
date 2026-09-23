@@ -1,4 +1,5 @@
 import logging
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -9,6 +10,10 @@ logger = logging.getLogger(__name__)
 # Matching gets noisier below 80px — which is why naming and merging are the
 # same form — but a dropped face can never be recognised at all.
 MIN_FACE_PX = 40
+# SFace embeds a 112x112 face. Crops with a smaller face are upscaled to this
+# before matching; beyond MAX_UPSCALE there is nothing left to interpolate.
+TARGET_FACE_PX = 112
+MAX_UPSCALE = 4.0
 # Laplacian variance of the face crop below which the face is motion-blurred or
 # out of focus. Heuristic — calibrate against your own captures.
 MIN_FACE_SHARPNESS = 40.0
@@ -46,6 +51,7 @@ PERSON_MODEL_URL = (
     "caffemodel/MobileNetSSD/"
 )
 _PERSON_NET = None
+_PERSON_NET_LOCK = threading.Lock()
 
 
 def db_path(name=PERSON_DB, ensure=True):
@@ -81,17 +87,6 @@ def is_plausible_face_box(box, frame_w, frame_h):
     if w <= 0 or h <= 0:
         return False
     return w < frame_w * MAX_FACE_FRAME_RATIO and h < frame_h * MAX_FACE_FRAME_RATIO
-
-
-def box_iou(a, b):
-    """Intersection over union of two (x, y, w, h) boxes."""
-    ax, ay, aw, ah = a
-    bx, by, bw, bh = b
-    ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
-    iy = max(0, min(ay + ah, by + bh) - max(ay, by))
-    inter = ix * iy
-    union = aw * ah + bw * bh - inter
-    return inter / union if union else 0.0
 
 
 def box_containment(inner, outer):
@@ -394,8 +389,11 @@ def detect_persons(image_path):
         blob = cv2.dnn.blobFromImage(
             cv2.resize(image, (608, 608)), 0.007843, (608, 608), 127.5
         )
-        net.setInput(blob)
-        detections = net.forward()
+        # One Net is shared by every camera thread; setInput/forward is not
+        # reentrant.
+        with _PERSON_NET_LOCK:
+            net.setInput(blob)
+            detections = net.forward()
         for i in range(detections.shape[2]):
             confidence = float(detections[0, 0, i, 2])
             if int(detections[0, 0, i, 1]) != SSD_PERSON_CLASS or confidence < SSD_MIN_CONFIDENCE:
@@ -426,12 +424,18 @@ def _sharpness(image):
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
-def crop_face(image_path, box, margin=0.3):
+def crop_face(image_path, box, margin=0.3, upscale=False):
     """Return a JPEG of just the face, with margin, for use as a reference.
 
     Enrolling the full frame would embed the background too and makes the
     thumbnails useless; the margin keeps enough of the head for the detector to
     find the face again inside the crop.
+
+    With `upscale`, a face smaller than `TARGET_FACE_PX` is enlarged so the
+    embedding model gets its native input size instead of a handful of pixels
+    stretched by its own resize. Interpolation does not invent detail, but it
+    measurably beats the nearest-neighbour downsample path and keeps the
+    detector from missing the face inside its own crop.
     """
     import cv2
 
@@ -439,18 +443,26 @@ def crop_face(image_path, box, margin=0.3):
     if image is None:
         return None
 
-    x, y, w, h = box
-    pad_x, pad_y = int(w * margin), int(h * margin)
-    frame_h, frame_w = image.shape[:2]
-    x0, y0 = max(x - pad_x, 0), max(y - pad_y, 0)
-    x1, y1 = min(x + w + pad_x, frame_w), min(y + h + pad_y, frame_h)
-
-    crop = image[y0:y1, x0:x1]
+    crop = _crop_region(image, box, margin)
     if crop.size == 0:
         return None
 
-    ok, jpeg = cv2.imencode(".jpg", crop)
+    if upscale:
+        crop = upscale_face(crop, box)
+
+    ok, jpeg = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 95])
     return jpeg.tobytes() if ok else None
+
+
+def upscale_face(crop, box):
+    """Enlarge a crop so the face inside it is at least `TARGET_FACE_PX`."""
+    import cv2
+
+    face_px = min(box[2], box[3])
+    if face_px <= 0 or face_px >= TARGET_FACE_PX:
+        return crop
+    scale = min(TARGET_FACE_PX / face_px, MAX_UPSCALE)
+    return cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_LANCZOS4)
 
 
 def face_quality(image_path, box):

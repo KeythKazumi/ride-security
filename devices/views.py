@@ -82,8 +82,14 @@ def camera_stream(request, camera_id):
     rtsp_url = camera.get_rtsp_url()
     if not rtsp_url:
         return HttpResponse("No RTSP URL configured for this camera", status=404, content_type="text/plain")
+    # A dashboard grid of several cameras asks for a low frame rate; the single
+    # camera page uses the default.
+    try:
+        fps = min(max(int(request.GET.get("fps", 20)), 1), 30)
+    except ValueError:
+        fps = 20
     return StreamingHttpResponse(
-        generate_mjpeg_stream(camera, fps=20),
+        generate_mjpeg_stream(camera, fps=fps),
         content_type="multipart/x-mixed-replace; boundary=frame",
     )
 

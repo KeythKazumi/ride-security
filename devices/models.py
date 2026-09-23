@@ -2,6 +2,7 @@ import uuid
 from urllib.parse import quote, urlencode
 
 from django.db import models
+from django.utils import timezone
 
 
 class NVR(models.Model):
@@ -332,11 +333,21 @@ class MotionEvent(models.Model):
     )
     source = models.CharField(max_length=20, choices=Source.choices, default=Source.FRAME_DIFF)
     image = models.ImageField(upload_to=_event_upload_to)
-    detected_at = models.DateTimeField(auto_now_add=True)
+    detected_at = models.DateTimeField(default=timezone.now, help_text="When the frame was captured.")
     motion_score = models.FloatField(
         null=True,
         blank=True,
         help_text="Fraction of the frame that changed (0-1). Empty for manual captures.",
+    )
+    sequence = models.CharField(
+        max_length=32,
+        blank=True,
+        db_index=True,
+        help_text="Frames captured during one continuous motion episode share this id.",
+    )
+    rank = models.PositiveIntegerField(
+        default=0,
+        help_text="Position within the sequence by usefulness for recognition; 0 is the best shot.",
     )
 
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
@@ -366,7 +377,7 @@ class MotionEvent(models.Model):
     )
 
     class Meta:
-        ordering = ["-detected_at"]
+        ordering = ["-detected_at", "rank"]
         indexes = [
             models.Index(fields=["status"]),
             models.Index(fields=["-detected_at"]),

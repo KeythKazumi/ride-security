@@ -7,9 +7,12 @@ any camera that gives us RTSP.
 
 A background subtractor (MOG2) maintains a model of the static scene and returns
 a foreground mask per frame. When the share of foreground pixels crosses
-`min_area_ratio` the detector picks the sharpest frame from a short burst — a
-blurry frame is useless for face recognition even when the motion is real — and
-yields it as JPEG bytes.
+`min_area_ratio` an *episode* begins: the detector keeps sampling frames at
+`capture_interval` for as long as motion continues, and closes the episode
+once the scene has been quiet for `quiet_seconds`. The whole sequence is
+yielded so the caller can pick the most useful frames — someone walking toward
+the camera is far away and tiny in the first frame and only becomes
+recognisable near the end.
 
 Frames arrive through `LatestFrameStream`: a reader thread drains the socket at
 stream rate and keeps only the newest frame, so the detector always scores the
@@ -18,25 +21,56 @@ current scene instead of a backlog of stale frames.
 
 import logging
 import time
+from dataclasses import dataclass, field
+
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
 # Fraction of the frame that must change before we call it motion. 0.5% of a
 # 1080p frame is roughly a person-sized object at mid range.
 DEFAULT_MIN_AREA_RATIO = 0.005
-# Seconds to wait after a capture before arming again, so one person walking
-# past does not produce fifty rows.
-DEFAULT_COOLDOWN = 15.0
+# Seconds of stillness that end an episode. Someone pausing to look at a
+# doorbell is still one episode; a car passing and a person arriving a minute
+# later are two.
+DEFAULT_QUIET_SECONDS = 3.0
+# Hard cap so a flapping curtain cannot hold an episode open for an hour.
+DEFAULT_MAX_EPISODE_SECONDS = 60.0
+# Seconds between frames sampled during an episode. Walking pace covers about
+# 1.4 m per second, so one frame per second gives a shot at every step.
+DEFAULT_CAPTURE_INTERVAL = 1.0
+# Seconds to wait after an episode ends before a new one may start.
+DEFAULT_COOLDOWN = 2.0
 # Seconds the subtractor learns the scene before its output is trusted.
 DEFAULT_WARMUP_SECONDS = 5.0
 # Frames per second at which the trigger is evaluated. Every received frame is
 # fed to the subtractor regardless — this only paces the (cheap) mask scoring.
 DEFAULT_SAMPLE_FPS = 5
-# Frames collected after a trigger, from which the sharpest is kept.
-DEFAULT_BURST_FRAMES = 5
 # The mask is computed on a downscaled frame: cheap enough to score at stream
 # rate, and a pixel ratio means the same thing at any resolution.
 ANALYSIS_WIDTH = 640
+
+
+@dataclass
+class Frame:
+    """One sampled frame from an episode."""
+
+    jpeg: bytes
+    captured_at: object  # aware datetime
+    motion_score: float
+    sharpness: float
+
+
+@dataclass
+class Episode:
+    """A continuous run of motion on one camera."""
+
+    started_at: object  # aware datetime
+    frames: list = field(default_factory=list)
+
+    @property
+    def peak_score(self):
+        return max((f.motion_score for f in self.frames), default=0.0)
 
 
 def _background_subtractor():
@@ -78,22 +112,29 @@ def _foreground_ratio(mask):
     return float(np.count_nonzero(mask)) / mask.size
 
 
-def iter_motion_events(
+def _encode(frame):
+    import cv2
+
+    ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+    return jpeg.tobytes() if ok else None
+
+
+def iter_motion_episodes(
     camera,
     min_area_ratio=DEFAULT_MIN_AREA_RATIO,
+    quiet_seconds=DEFAULT_QUIET_SECONDS,
+    max_episode_seconds=DEFAULT_MAX_EPISODE_SECONDS,
+    capture_interval=DEFAULT_CAPTURE_INTERVAL,
     cooldown=DEFAULT_COOLDOWN,
     warmup_seconds=DEFAULT_WARMUP_SECONDS,
     sample_fps=DEFAULT_SAMPLE_FPS,
-    burst_frames=DEFAULT_BURST_FRAMES,
     stop_event=None,
 ):
-    """Yield `(motion_score, jpeg_bytes)` for each motion event on `camera`.
+    """Yield an `Episode` for each continuous run of motion on `camera`.
 
     Runs until the stream dies for good or `stop_event` is set. `stop_event` is
     any object with an `is_set()` method (threading.Event).
     """
-    import cv2
-
     from .streaming import LatestFrameStream
 
     rtsp_url = camera.get_rtsp_url()
@@ -105,11 +146,31 @@ def iter_motion_events(
     subtractor = None
     generation = -1
     last_seq = 0
-    armed_at = 0.0
     warm_until = 0.0
     interval = 1.0 / sample_fps if sample_fps else 0.0
     last_check = 0.0
     last_score_log = 0.0
+
+    episode = None
+    episode_started = 0.0
+    last_motion = 0.0
+    last_capture = 0.0
+    episode_ended = 0.0
+
+    def close_episode():
+        nonlocal episode, episode_ended
+        finished, episode = episode, None
+        episode_ended = time.monotonic()
+        if finished and finished.frames:
+            logger.info(
+                "Episode on camera %s: %s frame(s) over %.0fs, peak score %.4f",
+                camera.id,
+                len(finished.frames),
+                (finished.frames[-1].captured_at - finished.started_at).total_seconds(),
+                finished.peak_score,
+            )
+            return finished
+        return None
 
     try:
         while not (stop_event and stop_event.is_set()):
@@ -118,6 +179,10 @@ def iter_motion_events(
                 if stream.dead.is_set():
                     logger.error("Stream for camera %s died; stopping watcher", camera.id)
                     break
+                if episode and time.monotonic() - last_motion >= quiet_seconds:
+                    finished = close_episode()
+                    if finished:
+                        yield finished
                 continue
             last_seq, gen, frame = got
 
@@ -139,35 +204,41 @@ def iter_motion_events(
                 logger.debug("Camera %s motion score: %.4f", camera.id, score)
                 last_score_log = now
 
-            in_warmup = now < warm_until
-            in_cooldown = now - armed_at < cooldown
-            if score < min_area_ratio or in_warmup or in_cooldown:
+            moving = score >= min_area_ratio and now >= warm_until
+
+            if episode is None:
+                if moving and now - episode_ended >= cooldown:
+                    episode = Episode(started_at=timezone.now())
+                    episode_started = last_motion = now
+                    last_capture = 0.0
+                else:
+                    continue
+            elif moving:
+                last_motion = now
+
+            if now - last_motion >= quiet_seconds or now - episode_started >= max_episode_seconds:
+                finished = close_episode()
+                if finished:
+                    yield finished
                 continue
 
-            best = frame
-            best_sharpness = sharpness(frame)
-            for _ in range(max(burst_frames - 1, 0)):
-                nxt = stream.read(after_seq=last_seq, timeout=1.0)
-                if nxt is None:
-                    break
-                last_seq, burst_gen, candidate = nxt
-                if burst_gen == generation:
-                    subtractor.apply(_downscale(candidate))
-                candidate_sharpness = sharpness(candidate)
-                if candidate_sharpness > best_sharpness:
-                    best, best_sharpness = candidate, candidate_sharpness
+            if now - last_capture >= capture_interval:
+                jpeg = _encode(frame)
+                if jpeg:
+                    episode.frames.append(
+                        Frame(
+                            jpeg=jpeg,
+                            captured_at=timezone.now(),
+                            motion_score=score,
+                            sharpness=sharpness(frame),
+                        )
+                    )
+                    last_capture = now
 
-            encoded, jpeg = cv2.imencode(".jpg", best)
-            if encoded:
-                armed_at = time.monotonic()
-                logger.info(
-                    "Motion on camera %s: score=%.4f sharpness=%.1f",
-                    camera.id,
-                    score,
-                    best_sharpness,
-                )
-                yield score, jpeg.tobytes()
-            else:
-                logger.warning("Could not encode motion frame for camera %s", camera.id)
+        # Stopped mid-episode: hand over what was collected.
+        if episode:
+            finished = close_episode()
+            if finished:
+                yield finished
     finally:
         stream.stop()

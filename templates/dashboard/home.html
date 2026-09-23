@@ -27,6 +27,27 @@
     </div>
 </section>
 
+{% if live_cameras %}
+<section class="panel live-panel">
+    <div class="panel-header">
+        <h2>Live</h2>
+        <span class="link-sm">{{ live_cameras|length }} camera{{ live_cameras|length|pluralize }}</span>
+    </div>
+    <div class="live-grid">
+        {% for camera in live_cameras %}
+        <a href="{% url 'devices:camera_feed' camera.id %}" class="live-tile">
+            <img src="{% url 'devices:camera_stream' camera.id %}?fps=6" alt="{{ camera.name }} live"
+                 onerror="this.closest('.live-tile').classList.add('live-tile-error')">
+            <span class="live-tile-error-text">Stream unavailable</span>
+            <span class="live-tile-label">
+                <span class="status-dot status-{{ camera.status }}"></span>{{ camera.name }}
+            </span>
+        </a>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
 <div class="content-grid">
     <section class="panel">
         <div class="panel-header">

@@ -28,7 +28,6 @@ from .face_recognition import (
     CANDIDATE_DB,
     MIN_VERIFY_CONFIDENCE,
     PERSON_DB,
-    box_iou,
     crop_face,
     db_path,
     face_belongs_to_person,
@@ -40,11 +39,6 @@ from .face_recognition import (
 from .models import FaceCandidate, Person, Sighting
 
 logger = logging.getLogger(__name__)
-
-# Overlap needed to say a DeepFace match box and a detector box are the same
-# face. The two detectors box slightly differently, so this is deliberately
-# loose; two distinct faces in a frame overlap far less than this.
-MATCH_IOU = 0.3
 
 
 @contextmanager
@@ -78,33 +72,32 @@ def _unmatched(box):
 
 
 def identify_faces(image_path, detected_boxes):
-    """Match faces in a capture against enrolled people.
+    """Match faces in a capture against enrolled people, one crop at a time.
 
-    Every detected face comes back exactly once. DeepFace only reports faces
-    that landed under the distance threshold — a face nobody in the database
-    resembles is simply absent from its output — so the detector's boxes are
-    the source of truth and matches are attached to them by overlap. Faces with
-    no match stay unmatched and go on to the candidate pipeline instead of
-    being dropped because a *different* face in the frame was recognised.
+    Every detected face comes back exactly once, in order. Each face is cut
+    out with a margin and upscaled to the embedding model's input size before
+    searching — a 45px face on a street camera embedded straight from the
+    1080p frame is mostly noise, and DeepFace would otherwise silently omit
+    it from the results (it only reports faces under the distance threshold),
+    dropping it before it could become a candidate.
     """
-    matches = search_faces(image_path, PERSON_DB) if Person.objects.exists() else []
+    if not Person.objects.exists():
+        return [_unmatched(tuple(box)) for box in detected_boxes]
 
     results = []
-    claimed = set()
     for box in detected_boxes:
-        best, best_iou = None, 0.0
-        for index, match in enumerate(matches):
-            if index in claimed or not match.get("matched"):
-                continue
-            iou = box_iou(box, match["box"])
-            if iou > best_iou:
-                best, best_iou = index, iou
-        if best is not None and best_iou >= MATCH_IOU:
-            claimed.add(best)
-            results.append({**matches[best], "box": tuple(box)})
-        else:
-            results.append(_unmatched(tuple(box)))
+        crop = crop_face(image_path, box, margin=0.5, upscale=True)
+        match = _search_crop(crop, PERSON_DB) if crop else None
+        results.append({**match, "box": tuple(box)} if match else _unmatched(tuple(box)))
     return results
+
+
+def _search_crop(crop_bytes, db_name):
+    """Best match for a single face crop, or None."""
+    with _temp_jpeg(crop_bytes) as crop_path:
+        matches = search_faces(crop_path, db_name, is_crop=True)
+    matched = [m for m in matches if m.get("matched") and m.get("code")]
+    return min(matched, key=lambda m: m["distance"]) if matched else None
 
 
 def register_sightings(event, matches, image_path):
@@ -180,7 +173,7 @@ def register_sightings(event, matches, image_path):
 
 def observe_candidate(image_path, box, event):
     """Track an unmatched face. Returns a Person if this sighting promoted it."""
-    crop = crop_face(image_path, box)
+    crop = crop_face(image_path, box, upscale=True)
     if not crop:
         return None
 
@@ -226,15 +219,8 @@ def _find_candidate(crop_bytes):
     if not FaceCandidate.objects.exists():
         return None
 
-    with _temp_jpeg(crop_bytes) as crop_path:
-        matches = search_faces(crop_path, CANDIDATE_DB, is_crop=True)
-
-    for match in matches:
-        if match.get("matched") and match.get("code"):
-            candidate = FaceCandidate.objects.filter(code=match["code"]).first()
-            if candidate:
-                return candidate
-    return None
+    match = _search_crop(crop_bytes, CANDIDATE_DB)
+    return FaceCandidate.objects.filter(code=match["code"]).first() if match else None
 
 
 @transaction.atomic

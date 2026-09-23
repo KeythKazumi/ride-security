@@ -9,6 +9,7 @@ def home(request):
     cameras = Camera.objects.select_related("nvr")
     sensors = Sensor.objects.all()
     nvrs = NVR.objects.all()
+    live_cameras = [camera for camera in cameras if camera.get_rtsp_url()]
 
     context = {
         "stats": {
@@ -20,6 +21,7 @@ def home(request):
             "nvrs_online": nvrs.filter(is_online=True).count(),
         },
         "cameras": cameras[:6],
+        "live_cameras": live_cameras,
         "sensors": sensors[:6],
         "nvrs": nvrs[:4],
     }
