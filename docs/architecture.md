@@ -17,8 +17,8 @@ flowchart TB
         cf["cloudflared<br/>Cloudflare Tunnel<br/>profile: tunnel"]
     end
 
-    subgraph web["Docker service: web — Django (config)"]
-        urls["config/urls.py<br/>admin/ · accounts/ · devices/ · dashboard/"]
+    subgraph web["Docker service: web — Django (config) — image ride-security:latest"]
+        urls["config/urls.py<br/>admin/ · accounts/ · devices/ · dashboard/<br/>+ WhiteNoise for /static/"]
 
         subgraph accounts_app["accounts"]
             acc_views["UserLoginView<br/>UserLogoutView"]
@@ -50,7 +50,7 @@ flowchart TB
         end
     end
 
-    subgraph workers["Worker processes (compose profile: motion)"]
+    subgraph workers["Worker processes (compose profile: motion, same image)"]
         watcher["manage.py watch_motion<br/>one thread per camera"]
         processor["manage.py process_events --loop<br/>deferred analysis"]
         cleaner["manage.py cleanup_events --loop<br/>purge confirmed no-face captures"]
@@ -70,10 +70,15 @@ flowchart TB
         requests["requests"]
     end
 
-    subgraph lan["LAN"]
+    subgraph lan["Local LAN (same modem as the server)"]
         nvr_dev["NVR (TP-Link VIGI)<br/>RTSP 554 · HTTP snapshot"]
         cams["Cameras (PoE / WiFi)<br/>channels 1..N"]
         sensors_dev["Sensors<br/>(records only, no polling yet)"]
+    end
+
+    subgraph remote["Remote residence (other modem)"]
+        ts_router["Linux box running tailscale<br/>subnet router: --advertise-routes"]
+        nvr_remote["NVR (TP-Link VIGI)<br/>keeps its private LAN address"]
     end
 
     browser --> cf --> urls
@@ -131,6 +136,9 @@ flowchart TB
     nvr_dev --> cams
     sensors_dev -.-> dev_models
 
+    cv2 -. "RTSP over tailnet<br/>(WireGuard)" .-> ts_router --> nvr_remote
+    requests -. "HTTP snapshot over tailnet" .-> ts_router
+
     %% ---- palette: one colour per component type, all with dark text ----
     classDef default fill:#ffffff,stroke:#4b5563,color:#111827;
     classDef client fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
@@ -155,7 +163,8 @@ flowchart TB
     class watcher,processor worker;
     class db,media,candidates,captures,weights store;
     class cv2,deepface,requests lib;
-    class nvr_dev,cams,sensors_dev device;
+    class nvr_dev,cams,sensors_dev,nvr_remote device;
+    class ts_router edge;
 
     style client fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
     style edge fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
@@ -167,6 +176,7 @@ flowchart TB
     style storage fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
     style libs fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
     style lan fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
+    style remote fill:#f8fafc,stroke:#94a3b8,color:#0f172a,stroke-dasharray: 4 3;
     style workers fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
 ```
 
@@ -175,7 +185,7 @@ flowchart TB
 | Colour | Component type | Nodes |
 | --- | --- | --- |
 | Blue | Client | browser |
-| Orange (dashed) | Optional edge / external service | cloudflared |
+| Orange (dashed) | Optional edge / network overlay | cloudflared, Tailscale subnet router |
 | Indigo | URL routing | `config/urls.py` |
 | Green | Views / controllers | app views, Django admin, notification views |
 | Amber | Forms | `devices/forms.py` |
@@ -184,7 +194,7 @@ flowchart TB
 | Cyan | Long-running worker processes | watch_motion, process_events, cleanup_events |
 | Slate | Persistence / volumes | SQLite, person references, candidates, captures, DeepFace weights |
 | Pink | Third-party runtime libs | OpenCV, DeepFace, requests |
-| Red (dashed) | Physical LAN hardware | NVR, cameras, sensors |
+| Red (dashed) | Physical hardware, local or remote | NVRs, cameras, sensors |
 
 **Notes on the current state**
 
@@ -213,6 +223,13 @@ flowchart TB
 - Any structural change to a face database (promote, merge, delete) calls
   `invalidate_db_cache`, because DeepFace pickles embeddings next to the images and would
   otherwise keep matching identities that have moved.
+- The app has **no routing logic**. `NVR.ip_address` is handed to FFmpeg/OpenCV/requests
+  verbatim; whether it connects depends on the host's routing table. An NVR at another
+  residence is reached because the host is on a tailnet that carries that LAN's route — the
+  database record is identical to a local NVR's (see §6).
+- All four compose services run the **same image** (`ride-security:latest`, built once by
+  `web`). Static files are served by WhiteNoise after `collectstatic` in the entrypoint,
+  so the UI is styled with `DJANGO_DEBUG=false`.
 
 ---
 
@@ -974,3 +991,82 @@ All device/dashboard views are `@login_required`.
 
 `watch_motion`, `process_events` and `cleanup_events` also exist as compose services
 behind the `motion` profile: `docker compose --profile motion up -d`.
+
+Helper scripts in `docker/` wrap the common compose invocations:
+
+| Script | Does |
+| --- | --- |
+| `./docker/up` | `compose up -d` + follow `web` logs |
+| `./docker/start` / `./docker/stop` | start / stop **all** services including the `motion` profile, without removing containers |
+| `./docker/down` | remove containers (volumes are kept) |
+| `./docker/build` · `./docker/manage` · `./docker/test` · `./docker/reset_db` | build the image · run `manage.py` · run tests · wipe the SQLite db |
+
+---
+
+## 6. Deployment topology
+
+One server runs the stack; NVRs may live behind other modems. Tailscale joins every site
+into a single private network so each NVR keeps its LAN address. Full setup in
+[tailscale.md](tailscale.md).
+
+```mermaid
+flowchart LR
+    subgraph siteA["Residence A — LAN 192.168.15.0/24"]
+        home["home-server (Fedora)<br/>docker: web · motion · events · cleanup<br/>tailscale --advertise-routes 192.168.15.0/24<br/>--accept-routes"]
+        nvrA["mihkaNVR<br/>192.168.15.27"]
+        home -- "RTSP / HTTP, local LAN" --> nvrA
+    end
+
+    subgraph siteB["Residence B — LAN 192.168.1.0/24"]
+        ride["ride-server (Linux)<br/>tailscale --advertise-routes 192.168.1.0/24<br/>no app containers"]
+        nvrB["rideNVR<br/>192.168.1.115"]
+        ride -- "forwards to LAN" --> nvrB
+    end
+
+    subgraph anywhere["Anywhere"]
+        mac["Mac (dev)<br/>tailscale client<br/>edits code · pushes to GitHub"]
+    end
+
+    tailnet(("tailnet<br/>WireGuard, direct p2p"))
+
+    home <--> tailnet
+    ride <--> tailnet
+    mac <--> tailnet
+
+    home -. "RTSP to 192.168.1.115<br/>via ride-server route" .-> nvrB
+    mac -. "ssh · http://home-server:8000" .-> home
+    mac -. "ssh" .-> ride
+
+    github["GitHub<br/>KeythKazumi/ride-security"]
+    mac -- "git push" --> github
+    github -- "tarball pull<br/>+ compose build web" --> home
+
+    classDef host fill:#cffafe,stroke:#0891b2,color:#164e63;
+    classDef device fill:#fee2e2,stroke:#dc2626,color:#7f1d1d,stroke-dasharray: 4 3;
+    classDef client fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef overlay fill:#ffedd5,stroke:#ea580c,color:#7c2d12;
+    classDef ext fill:#e2e8f0,stroke:#475569,color:#0f172a;
+    class home,ride host;
+    class nvrA,nvrB device;
+    class mac client;
+    class tailnet overlay;
+    class github ext;
+    style siteA fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
+    style siteB fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
+    style anywhere fill:#f8fafc,stroke:#94a3b8,color:#0f172a;
+```
+
+**Rules this topology relies on**
+
+- Exactly one Linux box per residence advertises that residence's LAN. NVRs and cameras
+  never run Tailscale.
+- The app host runs `tailscale up --accept-routes`; Linux does not accept advertised
+  subnets by default, macOS does.
+- LAN ranges must differ between residences. Two sites on `192.168.1.0/24` cannot both be
+  routed — change one modem's DHCP range.
+- Docker containers on the Linux host reach tailnet routes through the host's routing
+  table with no compose changes. Docker Desktop on macOS cannot reach LAN devices at all
+  (macOS Local Network privacy), which is why the Mac is a development machine only.
+- Deployment is pull-based: push to `main`, then on the server fetch the tarball and
+  `docker compose --profile motion build web && up -d`. Runtime data (SQLite, media,
+  DeepFace weights) lives in named volumes and survives rebuilds.

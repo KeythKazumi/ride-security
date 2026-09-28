@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Stop every ride-security container (web + motion workers) without removing
+# them. Restart with ./docker/start.
+set -e
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/compose"
+
+compose --profile motion stop "$@"

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Start previously stopped ride-security containers (web + motion workers).
+set -e
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR/.."
+source "$SCRIPT_DIR/compose"
+
+compose --profile motion start "$@"
+compose --profile motion ps

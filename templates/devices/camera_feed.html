@@ -24,9 +24,8 @@
 
     <div class="feed-meta">
         <p><strong>Channel:</strong> {{ camera.channel }}</p>
-        <p><strong>RTSP URL:</strong> <code>{{ rtsp_url|default:"—" }}</code></p>
-        <p><strong>Snapshot URL:</strong> <code>{{ snapshot_url|default:"—" }}</code></p>
         <p><strong>NVR:</strong> {{ camera.nvr|default:"—" }}</p>
+        <p><strong>Source:</strong> {% if has_rtsp %}RTSP via NVR{% else %}not configured{% endif %}</p>
         <p>
             <a href="{% url 'devices:camera_recognize' camera.id %}" target="_blank" class="btn btn-primary">Recognize faces</a>
             <form method="post" action="{% url 'devices:event_capture' camera.id %}" class="inline-form">
@@ -36,19 +35,5 @@
             <a href="{% url 'devices:events' %}?camera={{ camera.id }}" class="btn btn-ghost">Captures</a>
         </p>
     </div>
-</section>
-
-<section class="panel" style="margin-top: 20px;">
-    <div class="panel-header">
-        <h2>Direct stream</h2>
-    </div>
-    {% if rtsp_url %}
-    <p class="empty-state">
-        Use this RTSP URL in a compatible player (e.g., VLC):<br>
-        <code>{{ rtsp_url }}</code>
-    </p>
-    {% else %}
-    <p class="empty-state">No RTSP URL configured.</p>
-    {% endif %}
 </section>
 {% endblock %}

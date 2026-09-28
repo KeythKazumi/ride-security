@@ -1,6 +1,7 @@
 services:
   web:
     build: .
+    image: ride-security:latest
     container_name: ride-security
     ports:
       - "8000:8000"
@@ -13,7 +14,7 @@ services:
     restart: unless-stopped
 
   motion:
-    build: .
+    image: ride-security:latest
     container_name: ride-security-motion
     entrypoint: ["python", "manage.py", "watch_motion"]
     env_file:
@@ -29,7 +30,7 @@ services:
     restart: unless-stopped
 
   events:
-    build: .
+    image: ride-security:latest
     container_name: ride-security-events
     entrypoint: ["python", "manage.py", "process_events", "--loop"]
     env_file:
@@ -45,7 +46,7 @@ services:
     restart: unless-stopped
 
   cleanup:
-    build: .
+    image: ride-security:latest
     container_name: ride-security-cleanup
     entrypoint: ["python", "manage.py", "cleanup_events", "--loop"]
     env_file:

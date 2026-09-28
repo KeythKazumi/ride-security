@@ -235,6 +235,14 @@ photo and do not want to wait for the cameras to find them.
 Reference images are stored under `MEDIA_ROOT/persons/<code>/`, keyed on an immutable
 identity code rather than the name, so renaming somebody never breaks their recognition.
 
+## Reaching NVRs at other residences
+
+NVRs behind a different modem have private addresses the server cannot route
+to. The supported answer is Tailscale: one Linux box per residence acts as a
+subnet router, the app host accepts those routes, and every NVR keeps its
+normal LAN address. Setup, daily use and pitfalls are in
+[docs/tailscale.md](docs/tailscale.md).
+
 ## Enabling Cloudflare Tunnel later
 
 When you want external access:

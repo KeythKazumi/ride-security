@@ -58,10 +58,11 @@ def camera_list(request):
 def camera_feed(request, camera_id):
     """Display a single camera with its live feed / snapshot."""
     camera = get_object_or_404(Camera, pk=camera_id)
+    # The RTSP/snapshot URLs embed the NVR credentials; never hand them to a template.
     return render(
         request,
         "devices/camera_feed.html",
-        {"camera": camera, "rtsp_url": camera.get_rtsp_url(), "snapshot_url": camera.get_snapshot_url()},
+        {"camera": camera, "has_rtsp": bool(camera.get_rtsp_url())},
     )
 
 
