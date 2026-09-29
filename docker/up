@@ -5,5 +5,5 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR/.."
 source "$SCRIPT_DIR/compose"
 
-compose up -d
-compose logs -f web
+compose --profile motion up -d
+compose --profile motion logs -f web

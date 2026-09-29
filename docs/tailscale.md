@@ -145,11 +145,27 @@ does to the local NVR.
 Add `rideNVR` in the UI with its **real LAN address** (`192.168.1.115`) and
 the cameras by channel, the same as `mihkaNVR`.
 
-### Reaching the UI from outside
+### Reaching the UI
 
-`http://home-server:8000` from the Mac, wherever it is. This replaces the
-need for Cloudflare Tunnel for personal use — the tunnel profile is still
-there if you want a public URL for people who are not on the tailnet.
+On the **same LAN** as the server, find its address and open the app:
+
+```bash
+hostname -I | awk '{print $1}'        # e.g. 192.168.15.31
+```
+
+then browse to `http://<server-ip>:8000` (e.g. `http://192.168.15.31:8000`)
+from any machine on that network. On Fedora, firewalld blocks port 8000 to
+other machines by default — open it once:
+
+```bash
+sudo firewall-cmd --permanent --add-port=8000/tcp && sudo firewall-cmd --reload
+```
+
+From **outside that LAN**, with Tailscale installed on the client, the same
+app is just `http://home-server:8000` — MagicDNS resolves the name to the
+tailnet address from any network. This replaces the need for Cloudflare
+Tunnel for personal use — the tunnel profile is still there if you want a
+public URL for people who are not on the tailnet.
 
 ### Administering the servers
 

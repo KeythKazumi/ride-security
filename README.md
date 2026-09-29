@@ -43,7 +43,22 @@ Local-first Django app to discover, manage, and stream IP cameras and NVRs over 
 
      Then open `http://localhost:8000`.
 
-4. Log in with the default admin user created by `./entrypoint.sh`.
+4. Log in with the default admin user created by `./entrypoint.sh`
+   (`admin` / `admin`). Change it immediately on any machine reachable over a
+   network:
+
+   ```bash
+   docker compose exec web python manage.py changepassword admin
+   ```
+
+   To create additional users:
+
+   ```bash
+   docker compose exec web python manage.py createsuperuser
+   ```
+
+   On a fresh database you can pick the credentials up front — set
+   `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `.env` before the first start.
 
 ## Finding the CIDR
 

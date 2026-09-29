@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Run a Tailscale container (subnet router / tailnet node) using tailscale.env.
+# Copy tailscale.env.example to tailscale.env and set TS_AUTHKEY first.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Standalone copy (e.g. USB drive) has the env file next to the script;
+# in the repo it lives at the project root, one level above docker/.
+if [ -f "$SCRIPT_DIR/tailscale.env" ]; then
+    ENV_FILE="$SCRIPT_DIR/tailscale.env"
+else
+    ENV_FILE="$SCRIPT_DIR/../tailscale.env"
+fi
+if [ ! -f "$ENV_FILE" ]; then
+    cp "$SCRIPT_DIR/tailscale.env.example" "$ENV_FILE"
+    echo "Created $ENV_FILE — set TS_AUTHKEY inside it, then re-run."
+    exit 1
+fi
+
+# Host networking only helps on Linux; on macOS it would bind inside the
+# Docker VM and never reach the real LAN.
+HOST_NET=
+if [ "$(uname -s)" = "Linux" ]; then
+    HOST_NET="--net=host"
+fi
+
+docker rm -f tailscale >/dev/null 2>&1 || true
+docker run -d --name tailscale \
+    $HOST_NET --cap-add NET_ADMIN \
+    --env-file "$ENV_FILE" \
+    -v tailscale-state:/var/lib/tailscale \
+    -v /dev/net/tun:/dev/net/tun \
+    --restart unless-stopped \
+    tailscale/tailscale:v1.74.1
+
+sleep 2
+docker exec tailscale tailscale status
