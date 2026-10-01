@@ -61,6 +61,7 @@ class CameraForm(forms.ModelForm):
             "nvr",
             "channel",
             "location",
+            "show_image",
             "rtsp_url",
             "snapshot_url",
             "status",

@@ -15,11 +15,18 @@
     </div>
 
     <div class="camera-feed">
+        {% if camera.show_image %}
         <img src="{% url 'devices:camera_stream' camera.id %}" alt="{{ camera.name }} live stream" class="camera-snapshot" onerror="this.style.display='none'; document.getElementById('feed-error').style.display='block'">
         <div id="feed-error" class="feed-error" style="display: none;">
             Live stream unavailable.<br>
             <a href="{% url 'devices:camera_snapshot' camera.id %}" target="_blank">Try snapshot</a>
         </div>
+        {% else %}
+        <div class="feed-error">
+            Image display is disabled for this camera.<br>
+            Monitoring and motion detection still run in the background.
+        </div>
+        {% endif %}
     </div>
 
     <div class="feed-meta">
@@ -31,6 +38,11 @@
             <form method="post" action="{% url 'devices:event_capture' camera.id %}" class="inline-form">
                 {% csrf_token %}
                 <button type="submit" class="btn btn-ghost">Capture &amp; analyze</button>
+            </form>
+            <form method="post" action="{% url 'devices:camera_toggle_image' camera.id %}" class="inline-form">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{% url 'devices:camera_feed' camera.id %}">
+                <button type="submit" class="btn btn-ghost">{% if camera.show_image %}Hide image{% else %}Show image{% endif %}</button>
             </form>
             <a href="{% url 'devices:events' %}?camera={{ camera.id }}" class="btn btn-ghost">Captures</a>
         </p>

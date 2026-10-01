@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Start the full system on a local server: the web UI plus the motion
+# pipeline (watch_motion, process_events --loop, cleanup_events --loop).
+# Uses the local override for host networking and any host header.
+set -e
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+cd "$SCRIPT_DIR/.."
+
+compose() {
+    docker compose \
+        -f docker-compose.yml \
+        -f docker-compose.local.yml \
+        --profile motion \
+        "$@"
+}
+
+echo "Starting Ride Security (web + motion pipeline)..."
+
+compose up -d --build
+
+compose ps
+compose logs -f

@@ -92,6 +92,10 @@ class Camera(models.Model):
     )
     channel = models.PositiveIntegerField(default=1)
     location = models.CharField(max_length=200, blank=True)
+    show_image = models.BooleanField(
+        default=True,
+        help_text="Show this camera's image in the UI. Detection keeps running either way.",
+    )
     rtsp_url = models.CharField(max_length=500, blank=True)
     snapshot_url = models.CharField(max_length=500, blank=True, help_text="Override URL for fetching a JPEG snapshot. If blank, a TP-Link VIGI default is used.")
     status = models.CharField(

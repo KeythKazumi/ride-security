@@ -11,39 +11,53 @@
     </div>
 </header>
 
+{% if cameras %}
+    {% regroup cameras by nvr as nvr_groups %}
+    {% for group in nvr_groups %}
+    <section class="panel"{% if not forloop.first %} style="margin-top: 40px"{% endif %}>
+        <div class="panel-header">
+            <h2>{% if group.grouper %}{{ group.grouper.name }}{% else %}No NVR{% endif %}</h2>
+            <span class="link-sm">{{ group.list|length }} camera{{ group.list|length|pluralize }}</span>
+        </div>
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Channel</th>
+                    <th>Location</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for camera in group.list %}
+                <tr>
+                    <td><strong><a href="{% url 'devices:camera_feed' camera.id %}">{{ camera.name }}</a></strong></td>
+                    <td>{{ camera.channel }}</td>
+                    <td>{{ camera.location|default:"—" }}</td>
+                    <td>
+                        <span class="badge badge-{{ camera.status }}">{{ camera.get_status_display }}</span>
+                        {% if not camera.show_image %}<span class="badge badge-offline">image hidden</span>{% endif %}
+                    </td>
+                    <td>
+                        <div class="row-actions">
+                            <form method="post" action="{% url 'devices:camera_toggle_image' camera.id %}" class="inline-form">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-sm btn-ghost">{% if camera.show_image %}Hide image{% else %}Show image{% endif %}</button>
+                            </form>
+                            <a href="{% url 'devices:camera_edit' camera.id %}" class="btn btn-sm btn-ghost">Edit</a>
+                            <a href="{% url 'devices:camera_delete' camera.id %}" class="btn btn-sm btn-danger">Remove</a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+    {% endfor %}
+{% else %}
 <section class="panel">
-    {% if cameras %}
-    <table class="data-table">
-        <thead>
-            <tr>
-                <th>Name</th>
-                <th>NVR</th>
-                <th>Channel</th>
-                <th>Location</th>
-                <th>Status</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for camera in cameras %}
-            <tr>
-                <td><strong><a href="{% url 'devices:camera_feed' camera.id %}">{{ camera.name }}</a></strong></td>
-                <td>{{ camera.nvr|default:"—" }}</td>
-                <td>{{ camera.channel }}</td>
-                <td>{{ camera.location|default:"—" }}</td>
-                <td><span class="badge badge-{{ camera.status }}">{{ camera.get_status_display }}</span></td>
-                <td>
-                    <div class="row-actions">
-                        <a href="{% url 'devices:camera_edit' camera.id %}" class="btn btn-sm btn-ghost">Edit</a>
-                        <a href="{% url 'devices:camera_delete' camera.id %}" class="btn btn-sm btn-danger">Remove</a>
-                    </div>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
     <p class="empty-state">No cameras yet. <a href="{% url 'devices:camera_add' %}">Add one</a>.</p>
-    {% endif %}
 </section>
+{% endif %}
 {% endblock %}

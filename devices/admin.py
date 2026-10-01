@@ -29,12 +29,12 @@ class NVRAdmin(admin.ModelAdmin):
 
 @admin.register(Camera)
 class CameraAdmin(admin.ModelAdmin):
-    list_display = ("name", "nvr", "channel", "location", "status", "updated_at")
-    list_filter = ("status", "nvr")
+    list_display = ("name", "nvr", "channel", "location", "status", "show_image", "updated_at")
+    list_filter = ("status", "nvr", "show_image")
     search_fields = ("name", "location")
     fieldsets = (
         (None, {
-            "fields": ("name", "nvr", "channel", "location", "status"),
+            "fields": ("name", "nvr", "channel", "location", "status", "show_image"),
         }),
         ("Connection", {
             "fields": ("rtsp_url", "snapshot_url"),

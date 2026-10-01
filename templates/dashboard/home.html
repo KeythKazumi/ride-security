@@ -28,13 +28,15 @@
 </section>
 
 {% if live_cameras %}
+{% regroup live_cameras by nvr as live_groups %}
+{% for group in live_groups %}
 <section class="panel live-panel">
     <div class="panel-header">
-        <h2>Live</h2>
-        <span class="link-sm">{{ live_cameras|length }} camera{{ live_cameras|length|pluralize }}</span>
+        <h2>Live — {% if group.grouper %}{{ group.grouper.name }}{% else %}No NVR{% endif %}</h2>
+        <span class="link-sm">{{ group.list|length }} camera{{ group.list|length|pluralize }}</span>
     </div>
     <div class="live-grid">
-        {% for camera in live_cameras %}
+        {% for camera in group.list %}
         <a href="{% url 'devices:camera_feed' camera.id %}" class="live-tile">
             <img src="{% url 'devices:camera_stream' camera.id %}?fps=6" alt="{{ camera.name }} live"
                  onerror="this.closest('.live-tile').classList.add('live-tile-error')">
@@ -46,6 +48,7 @@
         {% endfor %}
     </div>
 </section>
+{% endfor %}
 {% endif %}
 
 <div class="content-grid">

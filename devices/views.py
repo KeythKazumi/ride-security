@@ -3,7 +3,7 @@ import tempfile
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count
+from django.db.models import Count, F
 from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -47,10 +47,16 @@ from .streaming import generate_mjpeg_stream
 
 @login_required
 def camera_list(request):
+    # Ordered by NVR so the template can regroup them into one panel per NVR;
+    # cameras with no NVR go last.
     return render(
         request,
         "devices/camera_list.html",
-        {"cameras": Camera.objects.select_related("nvr")},
+        {
+            "cameras": Camera.objects.select_related("nvr").order_by(
+                F("nvr__name").asc(nulls_last=True), "name"
+            )
+        },
     )
 
 
@@ -678,6 +684,21 @@ def camera_edit(request, camera_id):
     else:
         form = CameraForm(instance=camera)
     return render(request, "devices/camera_form.html", {"form": form, "is_edit": True, "camera": camera})
+
+
+@login_required
+def camera_toggle_image(request, camera_id):
+    """Show or hide the camera's image in the UI.
+
+    Display-only: the RTSP connection and motion watcher are untouched.
+    """
+    camera = get_object_or_404(Camera, pk=camera_id)
+    if request.method != "POST":
+        return redirect("devices:cameras")
+
+    camera.show_image = not camera.show_image
+    camera.save(update_fields=["show_image", "updated_at"])
+    return _back(request, fallback="devices:cameras")
 
 
 @login_required

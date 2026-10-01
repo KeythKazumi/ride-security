@@ -1,4 +1,5 @@
 from django.contrib.auth.decorators import login_required
+from django.db.models import F
 from django.shortcuts import render
 
 from devices.models import Camera, NVR, Sensor
@@ -6,10 +7,13 @@ from devices.models import Camera, NVR, Sensor
 
 @login_required
 def home(request):
-    cameras = Camera.objects.select_related("nvr")
+    # NVR-grouped order, no-NVR cameras last, so the live wall regroups cleanly.
+    cameras = Camera.objects.select_related("nvr").order_by(
+        F("nvr__name").asc(nulls_last=True), "name"
+    )
     sensors = Sensor.objects.all()
     nvrs = NVR.objects.all()
-    live_cameras = [camera for camera in cameras if camera.get_rtsp_url()]
+    live_cameras = [camera for camera in cameras if camera.show_image and camera.get_rtsp_url()]
 
     context = {
         "stats": {
