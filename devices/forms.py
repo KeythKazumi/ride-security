@@ -56,14 +56,14 @@ class CameraForm(forms.ModelForm):
 
     class Meta:
         model = Camera
+        # rtsp_url / snapshot_url are deliberately excluded: they are derived
+        # from the NVR and only overridable from the admin.
         fields = [
             "name",
             "nvr",
             "channel",
             "location",
             "show_image",
-            "rtsp_url",
-            "snapshot_url",
             "status",
         ]
 

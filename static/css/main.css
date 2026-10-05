@@ -656,7 +656,70 @@ a:hover {
 }
 
 .face-card.needs-name {
-    border-color: var(--warning);
+    border-color: #3d4a66;
+    position: relative;
+}
+
+/* Select toggle on a face card: the native checkbox is hidden and a button
+   drawn in its place, so selection reads like an action rather than a form. */
+.face-card-select {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 1;
+    cursor: pointer;
+}
+
+.face-card-select input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.face-card-select-btn {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: rgba(15, 17, 23, 0.8);
+    border: 1px solid var(--border);
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.face-card-select-btn::before {
+    content: "Select";
+}
+
+.face-card-select:hover .face-card-select-btn {
+    border-color: var(--text-secondary);
+}
+
+.face-card-select input:checked + .face-card-select-btn {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.face-card-select input:checked + .face-card-select-btn::before {
+    content: "✓ Selected";
+}
+
+.face-card:has(.face-card-select input:checked) {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+}
+
+/* Bulk action row, separated from the section intro by a rule */
+.bulk-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 16px 0;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
 }
 
 .face-card img {

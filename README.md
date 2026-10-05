@@ -143,7 +143,8 @@ That starts three workers: `watch_motion` (detects motion, saves frames),
 `process_events --loop` (runs face detection on saved frames) and `cleanup_events
 --loop` (purges confirmed no-face captures every 6 hours). Detection and analysis are
 separate on purpose — recognition takes hundreds of milliseconds and must not stall
-detection.
+detection. Only cameras whose status is **Online** are watched; set a camera to
+Offline to stop its stream and event capture without deleting it.
 
 To watch a single camera with custom sensitivity:
 

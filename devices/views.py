@@ -446,6 +446,44 @@ def candidate_delete(request, candidate_id):
 
 
 @login_required
+def person_bulk_delete(request):
+    """Delete every unnamed person ticked on the People page in one POST.
+
+    Restricted to unnamed people: named ones were a deliberate decision and
+    get the per-person confirmation page instead.
+    """
+    if request.method != "POST":
+        return redirect("devices:people")
+
+    ids = request.POST.getlist("person_ids")
+    people = list(Person.objects.filter(pk__in=ids, name=""))
+    for person in people:
+        delete_person(person)
+    if people:
+        messages.success(request, f"Removed {len(people)} unnamed person(s).")
+    else:
+        messages.info(request, "Nothing selected.")
+    return redirect("devices:people")
+
+
+@login_required
+def candidate_bulk_delete(request):
+    """Delete every candidate ticked on the People page in one POST."""
+    if request.method != "POST":
+        return redirect("devices:people")
+
+    ids = request.POST.getlist("candidate_ids")
+    candidates = list(FaceCandidate.objects.filter(pk__in=ids))
+    for candidate in candidates:
+        delete_candidate(candidate)
+    if candidates:
+        messages.success(request, f"Removed {len(candidates)} candidate(s).")
+    else:
+        messages.info(request, "Nothing selected.")
+    return redirect("devices:people")
+
+
+@login_required
 def candidate_promote(request, candidate_id):
     """Manually promote a candidate to a person, skipping the sighting threshold."""
     candidate = get_object_or_404(FaceCandidate, pk=candidate_id)

@@ -15,8 +15,9 @@ from devices.models import Camera
 
 class Command(BaseCommand):
     help = (
-        "Watch camera RTSP streams for motion. Each continuous run of motion is "
-        "sampled once a second and its best frames are stored as one sequence."
+        "Watch camera RTSP streams for motion. Only cameras with status "
+        "'online' are watched. Each continuous run of motion is sampled once "
+        "a second and its best frames are stored as one sequence."
     )
 
     def add_arguments(self, parser):
@@ -79,10 +80,14 @@ class Command(BaseCommand):
         cameras = Camera.objects.select_related("nvr")
         if options["cameras"]:
             cameras = cameras.filter(pk__in=options["cameras"])
-        cameras = [camera for camera in cameras if camera.get_rtsp_url()]
+        cameras = [
+            camera
+            for camera in cameras
+            if camera.get_rtsp_url() and camera.status == Camera.Status.ONLINE
+        ]
 
         if not cameras:
-            raise CommandError("No cameras with an RTSP URL to watch.")
+            raise CommandError("No online cameras with an RTSP URL to watch.")
 
         stop_event = threading.Event()
         threads = [
@@ -127,6 +132,14 @@ class Command(BaseCommand):
                 stop_event=stop_event,
             )
             for episode in episodes:
+                # Status can change while the watcher runs; a camera switched
+                # offline mid-run stops producing events without a restart.
+                camera.refresh_from_db(fields=["status"])
+                if camera.status != Camera.Status.ONLINE:
+                    self.stdout.write(
+                        f"[{camera.name}] episode skipped — camera is {camera.get_status_display().lower()}"
+                    )
+                    continue
                 saved = events.record_motion_episode(camera, episode, keep=options["keep_frames"])
                 if not saved:
                     self.stdout.write(
